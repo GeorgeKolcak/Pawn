@@ -339,12 +339,14 @@ class Hypercube:
 
 class ParameterContext:
     def __init__(self, graph = 0):
-        self.open_contexts = dict()
+        self.open_suprema = dict()
+        self.open_infima = dict()
         if graph:
             self.graph = graph
             self.interval = Hypercube.full_context(graph)
             for node in graph.nodes:
-                self.open_contexts[node] = set(node.contexts)
+                self.open_infima[node] = compute_monotonicity_extremes(node, False)
+                self.open_suprema[node] = compute_monotonicity_extremes(node, True)
             self.observable_edges = set()
 
             for kp in graph.known_parameters:
@@ -361,8 +363,10 @@ class ParameterContext:
         copy = ParameterContext()
         copy.graph = self.graph
         copy.interval = self.interval.copy()
-        for node in self.open_contexts:
-            copy.open_contexts[node] = set(self.open_contexts[node])
+        for node in self.open_infima:
+            copy.open_infima[node] = set(self.open_infima[node])
+        for node in self.open_suprema:
+            copy.open_suprema[node] = set(self.open_suprema[node])
         copy.observable_edges = set(self.observable_edges)
 
         return copy
@@ -424,12 +428,47 @@ class ParameterContext:
         elif self.interval.max[context1.id] < context1.target.maximum:
             self.limit_max(context0, self.interval.max[context1.id])
 
+    def close_infimum(self, context):
+        self.open_infima[context.target].remove(context)
+
+        for edge in context.edges:
+            if not edge:
+                continue
+            prime_filter = 0
+            if edge.monotonous < 0:
+                prime_filter = context.subcontexts[edge.source.id]
+            if edge.monotonous > 0:
+                prime_filter = context.supercontexts[edge.source.id]
+            if prime_filter:
+                self.open_infima[context.target].add(prime_filter)
+                if self.interval.min[prime_filter.id] == self.interval.max[prime_filter.id]:
+                    self.close_infimum(prime_filter);
+
+    def close_supremum(self, context):
+        self.open_suprema[context.target].remove(context)
+
+        for edge in context.edges:
+            if not edge:
+                continue
+            prime_ideal = 0
+            if edge.monotonous < 0:
+                prime_ideal = context.supercontexts[edge.source.id]
+            if edge.monotonous > 0:
+                prime_ideal = context.subcontexts[edge.source.id]
+            if prime_ideal:
+                self.open_suprema[context.target].add(prime_ideal)
+                if self.interval.min[prime_ideal.id] == self.interval.max[prime_ideal.id]:
+                    self.close_supremum(prime_ideal);
+
     def check_observable(self, context):
-        if self.empty() or (context not in self.open_contexts[context.target]):
+        if self.empty():
             return
 
         if self.interval.min[context.id] == self.interval.max[context.id]:
-            self.open_contexts[context.target].remove(context)
+            if context in self.open_infima[context.target]:
+                self.close_infimum(context)
+            if context in self.open_suprema[context.target]:
+                self.close_supremum(context)
 
         for edge in context.edges:
             if edge and edge.observable and (edge not in self.observable_edges):
@@ -452,23 +491,86 @@ class ParameterContext:
                     super = super.supercontexts[edge.source.id]
 
                 if not observable:
-                    if len(self.open_contexts) == 1:
-                        self.enforce_observability(edge)
-                    elif len(self.open_contexts) == 0:
+                    if len(self.open_infima) == 1:
+                        self.enforce_observability_upper(edge)
+                    if len(self.open_suprema) == 1:
+                        self.enforce_observability_lower(edge)
+                    if len(self.open_infima) + len(self.open_suprema) == 0:
                         self.interval.invalidate()
 
-    def enforce_observability(self, edge):
-        for open_context in self.open_contexts[edge.target]:
-            pair = open_context.subcontexts[edge.source.id]
-            if not pair:
-                pair = open_context.supercontexts[edge.source.id]
+    def enforce_observability_upper(self, edge):
+        for infimum in self.open_infima[edge.target]:
+            suprema_agree = True
+            sub = infimum.subcontexts[edge.source]
+            super = infimum.supercontexts[edge.source]
 
-            if open_context.target().maximum == 1:
-                self.limit(open_context, (1 - self.interval.min[pair.id]))
-            elif self.interval.min[pair.id] == 0:
-                self.limit_min(open_context, 1)
-            elif self.interval.max[pair.id] == open_context.target().maximum:
-                self.limit_max(open_context, (open_context.target().maximum - 1))
+            while sub:
+                if self.interval.max[infimum.id] != self.interval.max[sub.id]:
+                    suprema_agree = False
+                    break
+                sub = sub.subcontexts[edge.source]
+
+            while super:
+                if self.interval.max[infimum.id] != self.interval.max[super.id]:
+                    suprema_agree = False
+                    break
+                super = super.supercontexts[edge.source]
+
+            if suprema_agree:
+                self.limit_max(infimum, self.interval.max[infimum.id] - 1)
+
+    def enforce_observability_lower(self, edge):
+        for supremum in self.open_suprema[edge.target]:
+            infima_agree = True
+            sub = supremum.subcontexts[edge.source]
+            super = supremum.supercontexts[edge.source]
+
+            while sub:
+                if self.interval.min[supremum.id] != self.interval.min[sub.id]:
+                    infima_agree = False
+                    break
+                sub = sub.subcontexts[edge.source]
+
+            while super:
+                if self.interval.min[supremum.id] != self.interval.min[super.id]:
+                    infima_agree = False
+                    break
+                super = super.supercontexts[edge.source]
+
+            if infima_agree:
+                self.limit_min(supremum, self.interval.min[supremum.id] + 1)
+
+
+def compute_monotonicity_extremes(node, positive):
+    inhibitors = []
+    activators = []
+
+    for edge in node.contexts[0].edges:
+        if not edge:
+            continue
+        if edge.monotonous < 0:
+            inhibitors.append(edge.source)
+        elif edge.monotonous > 0:
+            activators.append(edge.source)
+
+    extremes = set()
+
+    for context in node.contexts:
+        extreme = True
+        for a in activators:
+            if (not positive and context.subcontexts[a.id]) or (positive and context.supercontexts[a.id]):
+                extreme = False;
+                break
+
+        for i in inhibitors:
+            if (not positive and context.supercontexts[i.id]) or (positive and context.subcontexts[i.id]):
+                extreme = False;
+                break;
+
+        if extreme:
+            extremes.add(context);
+
+    return extremes;
 
 
 def compute_parkih_vector(events):

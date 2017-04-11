@@ -219,7 +219,7 @@ def parse_regulatory_graph(filename):
                     if (c.regulators == sup_regs).all():
                         graph.known_minimums[c.id] = 1
                         if minmax:
-                            graph.known_maximums[c.id] = node.maximum
+                            graph.known_minimums[c.id] = node.maximum
 
 
     while line and (not line.isspace()):
