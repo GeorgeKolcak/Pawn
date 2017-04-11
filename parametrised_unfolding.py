@@ -542,6 +542,9 @@ class ParameterContext:
 
 
 def compute_monotonicity_extremes(node, positive):
+    if not node.contexts:
+        return set()
+
     inhibitors = []
     activators = []
 
