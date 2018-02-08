@@ -1,0 +1,15 @@
+cI:0/2
+cII:0/1
+cro:0/3
+N:0/1
+
+cI>2;cI:o+
+cI>2;cro:-o
+cI>2;cII:-o
+cI>1;N:-o
+cII>1;cI:o+
+cro>3;cro:o-
+cro>1;cI:o-
+cro>3;cII:o-
+cro>2;N:o-
+N>1;cII:+o
