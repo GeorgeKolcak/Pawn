@@ -5,19 +5,116 @@ verbose = False
 target = 0
 report_frequency = 4096
 
+
+class PossibleExtensionQueue:
+    def __init__(self):
+        self.possible_extensions = []
+
+    def __len__(self):
+        return len(self.possible_extensions)
+
+    def pop(self):
+        if not self.possible_extensions:
+            return
+
+        top = self.possible_extensions[0]
+        self.possible_extensions = self.possible_extensions[1:]
+
+        return top
+
+    def push(self, event):
+        jump = len(self)
+        min_i = 0
+        max_i = len(self)
+        index = 0
+        while jump > 0:
+            jump = (jump // 2) + (jump % 2)
+            if (index == len(self)) or (event.compare(self.possible_extensions[index]) < 0):
+                if not index:
+                    break
+                max_i = index
+                index = max(min_i, index - jump)
+            else:
+                if index == len(self):
+                    break
+                min_i = index + 1
+                index = min(max_i, index + jump)
+            if min_i == max_i:
+                index = min_i
+                break
+        self.possible_extensions.insert(index, event)
+
+    def remove(self, event):
+        self.possible_extensions.remove(event)
+
+
+
 class Unfolding:
-    def __init__(self, graph):
+    def __init__(self, graph, initial_marking, initial_context):
         self.conditions = []
         self.events = []
-        self.initial_marking = ([0] * len(graph.nodes))
+        self.discarded_events = []
+        self.initial_marking = list(initial_marking)
+        self.initial_context = initial_context.copy()
         self.marking_table = [0]
+        self.graph = graph
         for n in graph.nodes:
             for i in range(0,((n.maximum // 2) + 1)):
                 self.marking_table += self.marking_table
 
-    def get_table_entry(self, marking, graph):
+    def add_event(self, pe_queue, add_extensions = True):
+        if len(pe_queue) <= 0:
+            return
+
+        event = pe_queue.pop()
+        self.events.append(event)
+
+        table_entry = self.get_table_entry(event.marking)
+        event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
+        if not event.cutoff:
+            backhandCutoffs = table_entry.add_context(event.parameter_context.interval, event)
+            for bc in backhandCutoffs:
+                self.remove_suffix(bc, pe_queue)
+
+        if verbose:
+            print('Adding ' + str(event))
+            print('Event count: ' + str(len(self.events)))
+
+        for c in event.preset:
+            cond = c.copy()
+            cond.id = len(self.conditions)
+            if c.node == event.target:
+                cond.value = event.target_value
+            cond.parent = event
+
+            parent_coset = 0
+            for cc in event.preset:
+                if not parent_coset:
+                    parent_coset = set(cc.coset)
+                else:
+                    parent_coset &= cc.coset
+
+            event.poset.add(cond)
+            self.conditions.append(cond)
+
+            if event.cutoff or event.goal:
+                continue
+
+            cond.coset |= parent_coset
+            cond.coset |= event.poset
+            cond.coset -= event.preset
+
+            for cc in cond.coset:
+                cc.coset.add(cond)
+
+            if add_extensions:
+                possible_extension(self, cond, pe_queue)
+
+        return event
+
+    def get_table_entry(self, marking):
         index = 0
-        for n in graph.nodes:
+        for n in self.graph.nodes:
             index *= (2 ** ((n.maximum // 2) + 1))
             index += marking[n.id]
 
@@ -49,6 +146,8 @@ class Unfolding:
             pass
 
     def remove_event(self, event, queue):
+        self.discarded_events.append(event)
+
         for cond in event.poset:
             self.remove_condition(cond, queue)
 
@@ -99,7 +198,7 @@ class Event:
         self.cutoff = False
         self.goal = False
 
-    def init_from_preset(self, initial_marking, graph):
+    def init_from_preset(self, initial_marking, initial_context):
         self.marking = list(initial_marking)
 
         for c in self.preset:
@@ -114,7 +213,7 @@ class Event:
             self.marking[e.target.id] += e.nature
 
         if not self.parameter_context:
-            self.parameter_context = ParameterContext(graph)
+            self.parameter_context = initial_context.copy()
 
         if self.nature > 0:
             self.parameter_context.limit_min(self.context, self.target_value)
@@ -283,10 +382,10 @@ class Hypercube:
         return copy
 
     def dimension(self):
-        return numpy.sum(self.min ^ self.max)
+        return numpy.sum(self.max - self.min)
 
     def distance(self, hc):
-        return numpy.sum(self.min ^ hc.min) + numpy.sum(self.max ^ hc.max)
+        return numpy.sum(abs(self.min - hc.min)) + numpy.sum(abs(self.max - hc.max))
 
     def limit(self, context, value):
         res = False
@@ -371,6 +470,19 @@ class ParameterContext:
 
         return copy
 
+    def union(self, context):
+        union = self.copy()
+        union.interval = self.interval.union(context.interval)
+        union.open_infima = dict()
+        union.open_suprema = dict()
+        for node in self.graph.nodes:
+            union.open_infima[node] = compute_monotonicity_extremes(node, False)
+            if union.interval.min[union.open_infima[node].id] == union.interval.max[union.open_infima[node].id]:
+                union.close_infimum(union.open_infima[node])
+            union.open_suprema[node] = compute_monotonicity_extremes(node, True)
+            if union.interval.min[union.open_suprema[node].id] == union.interval.max[union.open_suprema[node].id]:
+                union.close_supremum(union.open_suprema[node])
+
     def limit(self, context, value):
         if self.interval.limit(context.id, value):
             self.check_edge_labels(context)
@@ -425,7 +537,7 @@ class ParameterContext:
 
         if self.interval.min[context0.id] > 0:
             self.limit_min(context1, self.interval.min[context0.id])
-        elif self.interval.max[context1.id] < context1.target.maximum:
+        if self.interval.max[context1.id] < context1.target.maximum:
             self.limit_max(context0, self.interval.max[context1.id])
 
     def close_infimum(self, context):
@@ -442,7 +554,7 @@ class ParameterContext:
             if prime_filter:
                 self.open_infima[context.target].add(prime_filter)
                 if self.interval.min[prime_filter.id] == self.interval.max[prime_filter.id]:
-                    self.close_infimum(prime_filter);
+                    self.close_infimum(prime_filter)
 
     def close_supremum(self, context):
         self.open_suprema[context.target].remove(context)
@@ -458,7 +570,7 @@ class ParameterContext:
             if prime_ideal:
                 self.open_suprema[context.target].add(prime_ideal)
                 if self.interval.min[prime_ideal.id] == self.interval.max[prime_ideal.id]:
-                    self.close_supremum(prime_ideal);
+                    self.close_supremum(prime_ideal)
 
     def check_observable(self, context):
         if self.empty():
@@ -562,18 +674,18 @@ def compute_monotonicity_extremes(node, positive):
         extreme = True
         for a in activators:
             if (not positive and context.subcontexts[a.id]) or (positive and context.supercontexts[a.id]):
-                extreme = False;
+                extreme = False
                 break
 
         for i in inhibitors:
             if (not positive and context.supercontexts[i.id]) or (positive and context.subcontexts[i.id]):
-                extreme = False;
-                break;
+                extreme = False
+                break
 
         if extreme:
-            extremes.add(context);
+            extremes.add(context)
 
-    return extremes;
+    return extremes
 
 
 def compute_parkih_vector(events):
@@ -607,9 +719,9 @@ def foata_compare(foata1, foata2):
     return len(foata1) - len(foata2)
 
 
-def possible_extension(graph, unfolding, condition, queue):
+def possible_extension(unfolding, condition, queue):
     coset_nodes = 0
-    node_cosets = [0] * len(graph.nodes)
+    node_cosets = [0] * len(unfolding.graph.nodes)
     for cocond in condition.coset:
         if not node_cosets[cocond.node.id]:
             node_cosets[cocond.node.id] = []
@@ -617,7 +729,7 @@ def possible_extension(graph, unfolding, condition, queue):
         if not (coset_nodes & (1 << cocond.node.id)):
             coset_nodes += (1 << cocond.node.id)
 
-    for node in graph.nodes:
+    for node in unfolding.graph.nodes:
         if ((node.regulators ^ coset_nodes) & node.regulators) or (not node_cosets[node.id]):
             continue
 
@@ -635,12 +747,12 @@ def possible_extension(graph, unfolding, condition, queue):
 
         for context in node.contexts:
             possible_presets = list(prefab_presets)
-            for i in range(0,len(graph.nodes)):
+            for i in range(0,len(unfolding.graph.nodes)):
                 if (node.regulators & (1 << i)) and node_cosets[i]:
                     new_possible_presets = []
                     for cocond in node_cosets[i]:
                         if context.edges[i].threshold:
-                            if ((context.regulators[i] == 0) and (cocond.value < context.edges[i].threshold)) or ((context.regulators[i] == graph.nodes[i].maximum) and (cocond.value >= context.edges[i].threshold)):
+                            if ((context.regulators[i] == 0) and (cocond.value < context.edges[i].threshold)) or ((context.regulators[i] == unfolding.graph.nodes[i].maximum) and (cocond.value >= context.edges[i].threshold)):
                                 for pp in possible_presets:
                                     if (pp.issubset(cocond.coset)):
                                         npp = set(pp)
@@ -686,7 +798,7 @@ def possible_extension(graph, unfolding, condition, queue):
                     inhibit_event.nature = -1
                     inhibit_event.context = context
                     inhibit_event.preset = pp
-                    enqueue_event(graph, unfolding, queue, inhibit_event)
+                    enqueue_event(unfolding, queue, inhibit_event)
                 if target_cond.value < node.maximum:
                     activ_event = Event()
                     activ_event.target = node
@@ -694,120 +806,67 @@ def possible_extension(graph, unfolding, condition, queue):
                     activ_event.nature = 1
                     activ_event.context = context
                     activ_event.preset = pp
-                    enqueue_event(graph, unfolding, queue, activ_event)
+                    enqueue_event(unfolding, queue, activ_event)
 
 
 #time_counter = 0
 #aggregate_time = 0
 #loop_time = time.clock()
-event_id = 0
 
 
-def enqueue_event(graph, unfolding, queue, event):
-    global event_id
-
-    event.init_from_preset(unfolding.initial_marking, graph)
-    table_entry = unfolding.get_table_entry(event.marking, graph)
+def enqueue_event(unfolding, queue, event):
+    event.init_from_preset(unfolding.initial_marking, unfolding.initial_context)
+    table_entry = unfolding.get_table_entry(event.marking)
     if table_entry.is_possible(event):
         if target:
             event.goal = (event.marking == target)
         table_entry.add_event(event)
 
-        event.id = event_id
-        event_id += 1
+        event.id = len(unfolding.events) + len(unfolding.discarded_events) + len(queue)
         for c in event.preset:
             c.poset.add(event)
 
-        jump = len(queue)
-        min_i = 0
-        max_i = len(queue)
-        index = 0
-        while jump > 0:
-            jump = (jump // 2) + (jump % 2)
-            if (index == len(queue)) or (event.compare(queue[index]) < 0):
-                if not index:
-                    break
-                max_i = index
-                index = max(min_i, index - jump)
-            else:
-                if index == len(queue):
-                    break
-                min_i = index + 1
-                index = min(max_i, index + jump)
-            if min_i == max_i:
-                index = min_i
-                break
-        queue.insert(index,event)
+        queue.push(event)
 
 
-def unfold(graph):
-    unfolding = Unfolding(graph)
+def init_unfolding(graph, initial_marking = None, initial_context = None):
+    if not initial_marking:
+        initial_marking = []
+        for n in graph.nodes:
+            initial_marking.append(n.initial)
 
-    cond_id = 0
+    if not initial_context:
+        initial_context = ParameterContext(graph)
+
+    unfolding = Unfolding(graph, initial_marking, initial_context)
 
     for n in graph.nodes:
         cond = Condition()
-        cond.id = cond_id
-        cond_id += 1
+        cond.id = len(unfolding.conditions)
         cond.node = n
-        cond.value = n.initial
-        unfolding.initial_marking[n.id] = n.initial
+        cond.value = initial_marking[n.id]
         for c in unfolding.conditions:
             c.coset.add(cond)
             cond.coset.add(c)
         unfolding.conditions.append(cond)
 
-    pe_queue = []
-    possible_extension(graph, unfolding, unfolding.conditions[0], pe_queue)
+    return unfolding
 
-    while len(pe_queue) > 0:
-        event = pe_queue[0]
-        unfolding.events.append(event)
-        pe_queue = pe_queue[1:]
 
+def unfold(graph):
+    unfolding = init_unfolding(graph)
+
+    pe_queue = PossibleExtensionQueue()
+
+    possible_extension(unfolding, unfolding.conditions[0], pe_queue)
+
+    event = unfolding.add_event(pe_queue)
+
+    while event:
         if not (len(unfolding.events) % report_frequency):
             print('Event count: ' + str(len(unfolding.events)))
             print('Event queue: ' + str(len(pe_queue)))
 
-        table_entry = unfolding.get_table_entry(event.marking, graph)
-        event.cutoff = (event.marking == unfolding.initial_marking) or table_entry.is_cutoff(event)
-        if not event.cutoff:
-            backhandCutoffs = table_entry.add_context(event.parameter_context.interval, event)
-            for bc in backhandCutoffs:
-                unfolding.remove_suffix(bc, pe_queue)
-
-        if verbose:
-            print('Adding ' + str(event))
-            print('Event count: ' + str(len(unfolding.events)))
-
-        for c in event.preset:
-            cond = c.copy()
-            cond.id = cond_id
-            cond_id += 1
-            if c.node == event.target:
-                cond.value = event.target_value
-            cond.parent = event
-
-            parent_coset = 0
-            for cc in event.preset:
-                if not parent_coset:
-                    parent_coset = set(cc.coset)
-                else:
-                    parent_coset &= cc.coset
-
-            event.poset.add(cond)
-            unfolding.conditions.append(cond)
-
-            if event.cutoff or event.goal:
-                continue
-
-            cond.coset |= parent_coset
-            cond.coset |= event.poset
-            cond.coset -= event.preset
-
-            for cc in cond.coset:
-                cc.coset.add(cond)
-
-            possible_extension(graph, unfolding, cond, pe_queue)
+        event = unfolding.add_event(pe_queue)
 
     return unfolding

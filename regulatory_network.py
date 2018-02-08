@@ -9,7 +9,7 @@ class Node:
     def __init__(self):
         self.id = 0
         self.name = ""
-        self.initial = False
+        self.initial = 0
         self.regulators = 0
         self.regulator_count = 0
         self.contexts = []
@@ -99,6 +99,18 @@ class RegulatoryGraph:
         self.known_parameters = dict()
         self.known_minimums = dict()
         self.known_maximums = dict()
+
+    def copy(self):
+        new_graph = RegulatoryGraph()
+        new_graph.parametrisation_size = self.parametrisation_size
+        new_graph.nodes = list(self.nodes)
+        new_graph.edges = list(self.nodes)
+        new_graph.contexts = dict(self.contexts)
+        new_graph.known_parameters = dict(self.known_parameters)
+        new_graph.known_minimums = dict(self.known_minimums)
+        new_graph.known_maximums = dict(self.known_maximums)
+
+        return new_graph
 
     def get_node(self, node):
         if common.IsNumber(node):
@@ -241,16 +253,16 @@ def parse_regulatory_graph(filename):
             if r and (not r.isspace()):
                 regval = r.split(':')
                 reg = graph.get_node(regval[0].strip())
-                regulators[reg] = 1
+                regulators[reg.id] = 1
                 if len(regval) > 1:
-                    regulators[reg] = int(regval[1])
+                    regulators[reg.id] = int(regval[1])
         value = int(opstrs[1])
 
         for c in target.contexts:
             if (regulators == c.regulators).all():
                 if not mode:
                     graph.known_parameters[c.id] = value
-                elif mode < 0:
+                elif mode > 0:
                     graph.known_minimums[c.id] = value
                 else:
                     graph.known_maximums[c.id] = value
