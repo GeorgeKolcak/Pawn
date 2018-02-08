@@ -93,3 +93,5 @@ ENV/
 
 # Testing
 *.dot
+Examples/toy_oscillator/*
+Examples/order_experiments/*
