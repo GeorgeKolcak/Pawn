@@ -326,7 +326,7 @@ class MarkingTableEntry:
 
     def is_cutoff(self, event):
         for c in self.contexts:
-            if event.parameter_context.issubset(c):
+            if event.parameter_context.lattice.issubset(c):
                 return True
 
         return False

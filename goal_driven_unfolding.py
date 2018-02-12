@@ -17,14 +17,6 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
 
         return copy
 
-    def issubset(self, context):
-        if self.empty():
-            return True
-        elif context.empty():
-            return self.empty()
-
-        return self.soft_limit.issubset(context.soft_limit)
-
     def limit(self, context, value):
         super().limit(context, value)
 
