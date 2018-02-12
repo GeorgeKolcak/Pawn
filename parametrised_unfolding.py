@@ -360,8 +360,8 @@ class Lattice:
 
         lattice.min = numpy.array([0] * graph.parametrisation_size)
         lattice.max = numpy.array([1] * graph.parametrisation_size)
-        for i in graph.contexts:
-            lattice.max[i] = graph.contexts[i].target.maximum
+        for i in graph.regulator_states:
+            lattice.max[i] = graph.regulator_states[i].target.maximum
 
         return lattice
 
@@ -455,11 +455,11 @@ class ParameterContext:
             self.observable_edges = set()
 
             for kp in graph.known_parameters:
-                self.limit(graph.contexts[kp], graph.known_parameters[kp])
+                self.limit(graph.regulator_states[kp], graph.known_parameters[kp])
             for km in graph.known_minimums:
-                self.limit_min(graph.contexts[km], graph.known_minimums[km])
+                self.limit_min(graph.regulator_states[km], graph.known_minimums[km])
             for km in graph.known_maximums:
-                self.limit_max(graph.contexts[km], graph.known_maximums[km])
+                self.limit_max(graph.regulator_states[km], graph.known_maximums[km])
 
     def empty(self):
         return (not self.lattice) or self.lattice.empty()
@@ -495,7 +495,7 @@ class ParameterContext:
 
         for i in range(0, len(changed_indices)):
             if changed_indices[i]:
-                self.check_edge_labels(self.graph.contexts[i])
+                self.check_edge_labels(self.graph.regulator_states[i])
 
     def union(self, context):
         union = self.copy()
@@ -516,8 +516,8 @@ class ParameterContext:
         self.check_observable(regulator_state)
         for edge in regulator_state.edges:
             if edge:
-                substate = regulator_state.subcontexts[edge.source.id]
-                superstate = regulator_state.supercontexts[edge.source.id]
+                substate = regulator_state.substates[edge.source.id]
+                superstate = regulator_state.superstates[edge.source.id]
                 if edge.monotonous:
                     if edge.monotonous > 0:
                         if substate:
@@ -553,9 +553,9 @@ class ParameterContext:
                 continue
             prime_filter = None
             if edge.monotonous < 0:
-                prime_filter = regulator_state.subcontexts[edge.source.id]
+                prime_filter = regulator_state.substates[edge.source.id]
             if edge.monotonous > 0:
-                prime_filter = regulator_state.supercontexts[edge.source.id]
+                prime_filter = regulator_state.superstates[edge.source.id]
             if prime_filter:
                 self.open_infima[regulator_state.target].add(prime_filter)
                 if self.lattice.min[prime_filter.id] == self.lattice.max[prime_filter.id]:
@@ -569,9 +569,9 @@ class ParameterContext:
                 continue
             prime_ideal = None
             if edge.monotonous < 0:
-                prime_ideal = regulator_state.supercontexts[edge.source.id]
+                prime_ideal = regulator_state.superstates[edge.source.id]
             if edge.monotonous > 0:
-                prime_ideal = regulator_state.subcontexts[edge.source.id]
+                prime_ideal = regulator_state.substates[edge.source.id]
             if prime_ideal:
                 self.open_suprema[regulator_state.target].add(prime_ideal)
                 if self.lattice.min[prime_ideal.id] == self.lattice.max[prime_ideal.id]:
@@ -590,8 +590,8 @@ class ParameterContext:
         for edge in regulator_state.edges:
             if edge and edge.observable and (edge not in self.observable_edges):
                 observable = False
-                substate = regulator_state.subcontexts[edge.source.id]
-                superstate = regulator_state.supercontexts[edge.source.id]
+                substate = regulator_state.substates[edge.source.id]
+                superstate = regulator_state.superstates[edge.source.id]
 
                 while substate:
                     if (self.lattice.min[regulator_state.id] > self.lattice.max[substate.id]) or\
@@ -599,7 +599,7 @@ class ParameterContext:
                         self.observable_edges.add(edge)
                         observable |= True
                         break
-                    substate = substate.subcontexts[edge.source.id]
+                    substate = substate.substates[edge.source.id]
 
                 while superstate:
                     if (self.lattice.min[regulator_state.id] > self.lattice.max[superstate.id]) or\
@@ -607,7 +607,7 @@ class ParameterContext:
                         self.observable_edges.add(edge)
                         observable |= True
                         break
-                    superstate = superstate.supercontexts[edge.source.id]
+                    superstate = superstate.superstates[edge.source.id]
 
                 if not observable:
                     if len(self.open_infima) == 1:
@@ -620,20 +620,20 @@ class ParameterContext:
     def enforce_observability_upper(self, edge):
         for infimum in self.open_infima[edge.target]:
             suprema_agree = True
-            substate = infimum.subcontexts[edge.source]
-            superstate = infimum.supercontexts[edge.source]
+            substate = infimum.substates[edge.source]
+            superstate = infimum.superstates[edge.source]
 
             while substate:
                 if self.lattice.max[infimum.id] != self.lattice.max[substate.id]:
                     suprema_agree = False
                     break
-                substate = substate.subcontexts[edge.source]
+                substate = substate.substates[edge.source]
 
             while superstate:
                 if self.lattice.max[infimum.id] != self.lattice.max[superstate.id]:
                     suprema_agree = False
                     break
-                superstate = superstate.supercontexts[edge.source]
+                superstate = superstate.superstates[edge.source]
 
             if suprema_agree:
                 self.limit_max(infimum, self.lattice.max[infimum.id] - 1)
@@ -641,33 +641,33 @@ class ParameterContext:
     def enforce_observability_lower(self, edge):
         for supremum in self.open_suprema[edge.target]:
             infima_agree = True
-            substate = supremum.subcontexts[edge.source]
-            superstate = supremum.supercontexts[edge.source]
+            substate = supremum.substates[edge.source]
+            superstate = supremum.superstates[edge.source]
 
             while substate:
                 if self.lattice.min[supremum.id] != self.lattice.min[substate.id]:
                     infima_agree = False
                     break
-                substate = substate.subcontexts[edge.source]
+                substate = substate.substates[edge.source]
 
             while superstate:
                 if self.lattice.min[supremum.id] != self.lattice.min[superstate.id]:
                     infima_agree = False
                     break
-                superstate = superstate.supercontexts[edge.source]
+                superstate = superstate.superstates[edge.source]
 
             if infima_agree:
                 self.limit_min(supremum, self.lattice.min[supremum.id] + 1)
 
 
 def compute_monotonicity_extremes(node, positive):
-    if not node.contexts:
+    if not node.regulatory_states:
         return set()
 
     inhibitors = []
     activators = []
 
-    for edge in node.contexts[0].edges:
+    for edge in node.regulatory_states[0].edges:
         if not edge:
             continue
         if edge.monotonous < 0:
@@ -677,20 +677,20 @@ def compute_monotonicity_extremes(node, positive):
 
     extremes = set()
 
-    for context in node.contexts:
+    for regulator_state in node.regulatory_states:
         extreme = True
         for a in activators:
-            if (not positive and context.subcontexts[a.id]) or (positive and context.supercontexts[a.id]):
+            if (not positive and regulator_state.substates[a.id]) or (positive and regulator_state.superstates[a.id]):
                 extreme = False
                 break
 
         for i in inhibitors:
-            if (not positive and context.supercontexts[i.id]) or (positive and context.subcontexts[i.id]):
+            if (not positive and regulator_state.superstates[i.id]) or (positive and regulator_state.substates[i.id]):
                 extreme = False
                 break
 
         if extreme:
-            extremes.add(context)
+            extremes.add(regulator_state)
 
     return extremes
 
@@ -699,10 +699,12 @@ def compute_parkih_vector(events):
     parikh = [0] * len(events)
 
     for i in range(0,len(events)):
-        for e in events:
-            if (not i) or (e.context.id > parikh[i - 1].context.id) or ((e.context.id == parikh[i-1].context.id) and (e.target_value >= parikh[i-1].target_value)):
-                if (not parikh[i]) or (e.context.id < parikh[i].context.id) or ((e.context.id == parikh[i].context.id) and (e.target_value < parikh[i].target_value)):
-                    parikh[i] = e
+        for event in events:
+            if (not i) or (event.context.id > parikh[i - 1].context.id) or\
+                    ((event.context.id == parikh[i-1].context.id) and (event.target_value >= parikh[i-1].target_value)):
+                if (not parikh[i]) or (event.context.id < parikh[i].context.id) or\
+                        ((event.context.id == parikh[i].context.id) and (event.target_value < parikh[i].target_value)):
+                    parikh[i] = event
 
     return parikh
 
@@ -719,9 +721,9 @@ def parikh_compare(vec1, vec2):
 
 def foata_compare(foata1, foata2):
     for i in range(0, min(len(foata1), len(foata2))):
-        res = parikh_compare(foata1[i], foata2[i])
-        if res:
-            return res
+        result= parikh_compare(foata1[i], foata2[i])
+        if result:
+            return result
 
     return len(foata1) - len(foata2)
 
@@ -745,31 +747,34 @@ def possible_extension(unfolding, condition, queue):
             prefab_presets.append(set())
         else:
             for cocond in node_cosets[node.id]:
-                pp = set()
-                pp.add(cocond)
-                prefab_presets.append(pp)
+                prefab_preset = set()
+                prefab_preset.add(cocond)
+                prefab_presets.append(prefab_preset)
 
         if not prefab_presets:
             continue
 
-        for context in node.contexts:
+        for regulator_state in node.regulatory_states:
             possible_presets = list(prefab_presets)
             for i in range(0,len(unfolding.graph.nodes)):
                 if (node.regulators & (1 << i)) and node_cosets[i]:
                     new_possible_presets = []
                     for cocond in node_cosets[i]:
-                        if context.edges[i].threshold:
-                            if ((context.regulators[i] == 0) and (cocond.value < context.edges[i].threshold)) or ((context.regulators[i] == unfolding.graph.nodes[i].maximum) and (cocond.value >= context.edges[i].threshold)):
-                                for pp in possible_presets:
-                                    if (pp.issubset(cocond.coset)):
-                                        npp = set(pp)
+                        if regulator_state.edges[i].threshold:
+                            if ((regulator_state.regulators[i] == 0) and
+                                        (cocond.value < regulator_state.edges[i].threshold)) or\
+                                    ((regulator_state.regulators[i] == unfolding.graph.nodes[i].maximum) and
+                                         (cocond.value >= regulator_state.edges[i].threshold)):
+                                for possible_preset in possible_presets:
+                                    if (possible_preset.issubset(cocond.coset)):
+                                        npp = set(possible_preset)
                                         npp.add(cocond)
                                         new_possible_presets.append(npp)
                         else:
-                            if context.regulators[i] == cocond.value:
-                                for pp in possible_presets:
-                                    if (pp.issubset(cocond.coset)):
-                                        npp = set(pp)
+                            if regulator_state.regulators[i] == cocond.value:
+                                for possible_preset in possible_presets:
+                                    if (possible_preset.issubset(cocond.coset)):
+                                        npp = set(possible_preset)
                                         npp.add(cocond)
                                         new_possible_presets.append(npp)
                     if not new_possible_presets:
@@ -777,20 +782,20 @@ def possible_extension(unfolding, condition, queue):
                     else:
                         possible_presets = new_possible_presets
 
-            for pp in possible_presets:
-                pp_num = 0
-                for cocond in pp:
-                    pp_num += (1 << cocond.node.id)
+            for possible_preset in possible_presets:
+                preset_hash = 0
+                for cocond in possible_preset:
+                    preset_hash += (1 << cocond.node.id)
 
                 if node.regulators & (1 << node.id):
-                    if pp_num != node.regulators:
+                    if preset_hash != node.regulators:
                         continue
                 else:
-                    if pp_num != (node.regulators + (1 << node.id)):
+                    if preset_hash != (node.regulators + (1 << node.id)):
                         continue
 
                 target_cond = 0
-                for cocond in pp:
+                for cocond in possible_preset:
                     if cocond.node == node:
                         target_cond = cocond
                         break
@@ -803,22 +808,17 @@ def possible_extension(unfolding, condition, queue):
                     inhibit_event.target = node
                     inhibit_event.target_value = (target_cond.value - 1)
                     inhibit_event.nature = -1
-                    inhibit_event.context = context
-                    inhibit_event.preset = pp
+                    inhibit_event.context = regulator_state
+                    inhibit_event.preset = possible_preset
                     enqueue_event(unfolding, queue, inhibit_event)
                 if target_cond.value < node.maximum:
                     activ_event = Event()
                     activ_event.target = node
                     activ_event.target_value = (target_cond.value + 1)
                     activ_event.nature = 1
-                    activ_event.context = context
-                    activ_event.preset = pp
+                    activ_event.context = regulator_state
+                    activ_event.preset = possible_preset
                     enqueue_event(unfolding, queue, activ_event)
-
-
-#time_counter = 0
-#aggregate_time = 0
-#loop_time = time.clock()
 
 
 def enqueue_event(unfolding, queue, event):

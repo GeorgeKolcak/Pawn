@@ -12,7 +12,7 @@ class Node:
         self.initial = 0
         self.regulators = 0
         self.regulator_count = 0
-        self.contexts = []
+        self.regulatory_states = []
         self.maximum = 1
 
     def __str__(self):
@@ -32,62 +32,55 @@ class Edge:
         return str(self.id) + ':' + str(self.source) + '->' + str(self.target)
 
 
-class RegulatoryContext:
+class RegulatoryState:
     def __init__(self, graph, target):
         self.id = 0
         self.target = target
         self.regulators = numpy.array([0] * len(graph.nodes))
         self.edges = [0] * len(graph.nodes)
-        self.subcontexts = ([0] * len(graph.nodes))
-        self.supercontexts = ([0] * len(graph.nodes))
+        self.substates = ([0] * len(graph.nodes))
+        self.superstates = ([0] * len(graph.nodes))
 
     def extend(self, graph, edge):
         self.edges[edge.source.id] = edge
-        ecs = []
+        extended_states = []
         for val in range(1, (edge.source.maximum + 1)):
-            ec = RegulatoryContext(graph, self.target)
-            ec.id = graph.parametrisation_size
-            ec.regulators = numpy.array(self.regulators)
-            ec.regulators[edge.source.id] = val
-            ec.edges = list(self.edges)
-            ec.edges[edge.source.id] = edge
+            extended_state = RegulatoryState(graph, self.target)
+            extended_state.id = graph.parametrisation_size
+            extended_state.regulators = numpy.array(self.regulators)
+            extended_state.regulators[edge.source.id] = val
+            extended_state.edges = list(self.edges)
+            extended_state.edges[edge.source.id] = edge
 
-            if ecs:
-                ecs[len(ecs) - 1].supercontexts[edge.source.id] = ec
-                ec.subcontexts[edge.source.id] = ecs[len(ecs) - 1]
+            if extended_states:
+                extended_states[len(extended_states) - 1].superstates[edge.source.id] = extended_state
+                extended_state.substates[edge.source.id] = extended_states[len(extended_states) - 1]
             else:
-                self.supercontexts[edge.source.id] = ec
-                ec.subcontexts[edge.source.id] = self
+                self.superstates[edge.source.id] = extended_state
+                extended_state.substates[edge.source.id] = self
 
             for i in range(0, len(graph.nodes)):
                 if (self.target.regulators & (1 << i)) and (not i == edge.source.id):
-                    intermediary = ec.subcontexts[edge.source.id].subcontexts[i]
-                    if intermediary and (intermediary.supercontexts[edge.source.id]):
-                        intermediary.supercontexts[edge.source.id].supercontexts[i] = ec
-                        ec.subcontexts[i] = intermediary.supercontexts[edge.source.id]
+                    intermediary = extended_state.substates[edge.source.id].substates[i]
+                    if intermediary and (intermediary.superstates[edge.source.id]):
+                        intermediary.superstates[edge.source.id].superstates[i] = extended_state
+                        extended_state.substates[i] = intermediary.superstates[edge.source.id]
 
-#            for e in self.edges:
-#                intermediary = self.edges[e]
-#                if edge in intermediary.edges:
-#                    ec.edges[e] = intermediary.edges[edge]
-#                    ec.edges[e].edges[e] = ec
-#           ec.edges[edge] = self
-#           self.edges[edge] = ec
-
-            graph.contexts[ec.id] = ec
+            graph.regulator_states[extended_state.id] = extended_state
             graph.parametrisation_size += 1
-            ecs.append(ec)
+            extended_states.append(extended_state)
             if edge.threshold:
-                ec.regulators[edge.source.id] = edge.source.maximum
+                extended_state.regulators[edge.source.id] = edge.source.maximum
                 break
-        return ecs
+        return extended_states
 
     def __str__(self):
-        str = ''
+        string = ''
         for r in self.regulators:
-            str += ',' + str(r)
-        str = str[1:]
-        return '{' + str + '}'
+            string += ',' + string(r)
+
+        string = string[1:]
+        return '{' + string + '}'
 
 
 class RegulatoryGraph:
@@ -95,7 +88,7 @@ class RegulatoryGraph:
         self.parametrisation_size = 0
         self.nodes = []
         self.edges = []
-        self.contexts = dict()
+        self.regulator_states = dict()
         self.known_parameters = dict()
         self.known_minimums = dict()
         self.known_maximums = dict()
@@ -105,7 +98,7 @@ class RegulatoryGraph:
         new_graph.parametrisation_size = self.parametrisation_size
         new_graph.nodes = list(self.nodes)
         new_graph.edges = list(self.nodes)
-        new_graph.contexts = dict(self.contexts)
+        new_graph.regulator_states = dict(self.regulator_states)
         new_graph.known_parameters = dict(self.known_parameters)
         new_graph.known_minimums = dict(self.known_minimums)
         new_graph.known_maximums = dict(self.known_maximums)
@@ -134,141 +127,139 @@ class RegulatoryGraph:
         return marking
 
 
-
 def parse_regulatory_graph(filename):
-    prnfile = open(filename, 'r')
+    prn_file = open(filename, 'r')
 
     graph = RegulatoryGraph()
     
-    line = prnfile.readline()
+    line = prn_file.readline()
 
     while not line.isspace():
-        substrs = line.split(":") 
-        values = substrs[1].split("/")
+        substrings = line.split(":")
+        values = substrings[1].split("/")
 
         node = Node()
         node.id = len(graph.nodes)
-        node.name = substrs[0]
+        node.name = substrings[0]
         node.initial = int(values[0])
         if len(values) == 2:
             node.maximum = int(values[1])
         graph.nodes.append(node)
         
-        line = prnfile.readline()
+        line = prn_file.readline()
 
-    line = prnfile.readline()
+    line = prn_file.readline()
     
     while line and (not line.isspace()):
-        substrs = line.split(":")
-        nds = substrs[0].split(";")
-        src = nds[0].split(">")
+        substrings = line.split(":")
+        node_strings = substrings[0].split(";")
+        source = node_strings[0].split(">")
         
         edge = Edge()
         edge.id = len(graph.edges)
-        edge.source = graph.get_node(src[0].strip())
-        edge.target = graph.get_node(nds[1].strip())
+        edge.source = graph.get_node(source[0].strip())
+        edge.target = graph.get_node(node_strings[1].strip())
 
         if edge.target.regulator_count == 0:
-            empty_con = RegulatoryContext(graph, edge.target)
-            empty_con.id = graph.parametrisation_size
+            empty_regulator_state = RegulatoryState(graph, edge.target)
+            empty_regulator_state.id = graph.parametrisation_size
             graph.parametrisation_size += 1
-            edge.target.contexts.append(empty_con)
-            graph.contexts[empty_con.id] = empty_con
+            edge.target.regulatory_states.append(empty_regulator_state)
+            graph.regulator_states[empty_regulator_state.id] = empty_regulator_state
 
         edge.target.regulators += (1 << edge.source.id)
         edge.target.regulator_count += 1
-        subcontexts = []
-        for c in edge.target.contexts:
-            subcontexts.append(c)
+        substates = list(edge.target.regulatory_states)
 
-        if len(substrs) > 1:
-            if '+' in substrs[1]:
+        if len(substrings) > 1:
+            if '+' in substrings[1]:
                 edge.monotonous = 1
-            if '-' in substrs[1]:
+            if '-' in substrings[1]:
                 edge.monotonous = -1
-            if 'o' in substrs[1]:
+            if 'o' in substrings[1]:
                 edge.observable = True
 
-        if len(src) > 1:
-            edge.threshold = int(src[1])
+        if len(source) > 1:
+            edge.threshold = int(source[1])
 
-        for c in subcontexts:
-            ecs = c.extend(graph, edge)
-            edge.target.contexts += ecs
+        for regulator_state in substates:
+            extended_regulator_state = regulator_state.extend(graph, edge)
+            edge.target.regulatory_states += extended_regulator_state
         
         graph.edges.append(edge)
         
-        line = prnfile.readline()
+        line = prn_file.readline()
 
-    line = prnfile.readline()
+    line = prn_file.readline()
 
     for node in graph.nodes:
-        if node.contexts:
-            pos = minmax
-            inf_regs = numpy.array([0] * len(graph.nodes))
-            sup_regs = numpy.array([0] * len(graph.nodes))
-            for edge in node.contexts[0].edges:
+        if node.regulatory_states:
+            possible = minmax
+            inhibitors = numpy.array([0] * len(graph.nodes))
+            activators = numpy.array([0] * len(graph.nodes))
+            for edge in node.regulatory_states[0].edges:
                 if not edge:
                     continue
                 if edge.monotonous:
                     if edge.monotonous > 0:
-                        inf_regs[edge.source.id] = 0
-                        sup_regs[edge.source.id] = edge.source.maximum
+                        inhibitors[edge.source.id] = 0
+                        activators[edge.source.id] = edge.source.maximum
                     else:
-                        inf_regs[edge.source.id] = edge.source.maximum
-                        sup_regs[edge.source.id] = 0
+                        inhibitors[edge.source.id] = edge.source.maximum
+                        activators[edge.source.id] = 0
                 else:
-                    pos = False
+                    possible = False
                     break
                 if edge.observable:
-                    pos |= True
-            if pos:
-                for c in node.contexts:
-                    if (c.regulators == inf_regs).all():
-                        graph.known_maximums[c.id] = (node.maximum - 1)
+                    possible |= True
+            if possible:
+                for regulatory_state in node.regulatory_states:
+                    if (regulatory_state.regulators == inhibitors).all():
                         if minmax:
-                            graph.known_maximums[c.id] = 0
-                    if (c.regulators == sup_regs).all():
-                        graph.known_minimums[c.id] = 1
+                            graph.known_maximums[regulatory_state.id] = 0
+                        else:
+                            graph.known_maximums[regulatory_state.id] = (node.maximum - 1)
+                    if (regulatory_state.regulators == activators).all():
                         if minmax:
-                            graph.known_minimums[c.id] = node.maximum
-
+                            graph.known_minimums[regulatory_state.id] = node.maximum
+                        else:
+                            graph.known_minimums[regulatory_state.id] = 1
 
     while line and (not line.isspace()):
-        substrs = line.split('|')
-        target = graph.get_node(substrs[0].strip())
-        opstrs = substrs[1].split('=')
+        substrings = line.split('|')
+        target = graph.get_node(substrings[0].strip())
+        operator_strings = substrings[1].split('=')
         mode = 0
-        if len(opstrs) <= 1:
-            opstrs = substrs[1].split('<')
-            if len(opstrs) > 1:
+        if len(operator_strings) <= 1:
+            operator_strings = substrings[1].split('<')
+            if len(operator_strings) > 1:
                 mode = -1
             else:
-                opstrs = substrs[1].split('>')
+                operator_strings = substrings[1].split('>')
                 mode = 1
 
-        regstr = opstrs[0].split(';')
+        regulator_strings = operator_strings[0].split(';')
         regulators = numpy.array([0] * len(graph.nodes))
-        for r in regstr:
-            if r and (not r.isspace()):
-                regval = r.split(':')
-                reg = graph.get_node(regval[0].strip())
-                regulators[reg.id] = 1
-                if len(regval) > 1:
-                    regulators[reg.id] = int(regval[1])
-        value = int(opstrs[1])
+        for regulator_string in regulator_strings:
+            if regulator_string and (not regulator_string.isspace()):
+                regulator_value_strings = regulator_string.split(':')
+                regulator = graph.get_node(regulator_value_strings[0].strip())
+                regulators[regulator.id] = 1
+                if len(regulator_value_strings) > 1:
+                    regulators[regulator.id] = int(regulator_value_strings[1])
+        value = int(operator_strings[1])
 
-        for c in target.contexts:
-            if (regulators == c.regulators).all():
+        for regulator_state in target.regulatory_states:
+            if (regulators == regulator_state.regulators).all():
                 if not mode:
-                    graph.known_parameters[c.id] = value
+                    graph.known_parameters[regulator_state.id] = value
                 elif mode > 0:
-                    graph.known_minimums[c.id] = value
+                    graph.known_minimums[regulator_state.id] = value
                 else:
-                    graph.known_maximums[c.id] = value
+                    graph.known_maximums[regulator_state.id] = value
                 break
 
-        line = prnfile.readline()
+        line = prn_file.readline()
 
-    prnfile.close()
+    prn_file.close()
     return graph
