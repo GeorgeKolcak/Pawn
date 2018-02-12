@@ -80,10 +80,10 @@ for e in unf.events:
     context_string = context_string[1:]
     hcstring = ''
     if not e.parameter_context.empty():
-        for i in e.parameter_context.interval.min:
+        for i in e.parameter_context.lattice.min:
             hcstring += str(i)
         hcstring+='-'
-        for i in e.parameter_context.interval.max:
+        for i in e.parameter_context.lattice.max:
             hcstring += str(i)
     else:
         hcstring = 'none'

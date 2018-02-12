@@ -48,7 +48,6 @@ class PossibleExtensionQueue:
         self.possible_extensions.remove(event)
 
 
-
 class Unfolding:
     def __init__(self, graph, initial_marking, initial_context):
         self.conditions = []
@@ -72,7 +71,7 @@ class Unfolding:
         table_entry = self.get_table_entry(event.marking)
         event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
         if not event.cutoff:
-            backhandCutoffs = table_entry.add_context(event.parameter_context.interval, event)
+            backhandCutoffs = table_entry.add_context(event.parameter_context.lattice, event)
             for bc in backhandCutoffs:
                 self.remove_suffix(bc, pe_queue)
 
@@ -283,8 +282,6 @@ class MarkingTableEntry:
     def add_event(self, event):
         self.events.add(event)
 
-        #self.add_context(event.parameter_context.interval)
-
     def add_context(self, hc, event):
         dim = hc.dimension()
         found = False
@@ -321,14 +318,14 @@ class MarkingTableEntry:
 
         backwardsCutoffs = set()
         for e in self.events:
-            if (not e.cutoff) and (e != event) and e.parameter_context.interval.issubset(hc):
+            if (not e.cutoff) and (e != event) and e.parameter_context.lattice.issubset(hc):
                 e.cutoff = True
                 backwardsCutoffs.add(e)
         return backwardsCutoffs
 
     def is_cutoff(self, event):
         for c in self.contexts:
-            if event.parameter_context.interval.issubset(c):
+            if event.parameter_context.lattice.issubset(c):
                 return True
 
         return False
@@ -353,115 +350,124 @@ class MarkingTableEntry:
         return True
 
 
-class Hypercube:
+class Lattice:
     def __init__(self):
         self.invalidate()
 
+    @staticmethod
     def full_context(graph):
-        fc = Hypercube()
+        lattice = Lattice()
 
-        fc.min = numpy.array([0] * graph.parametrisation_size)
-        fc.max = numpy.array([1] * graph.parametrisation_size)
+        lattice.min = numpy.array([0] * graph.parametrisation_size)
+        lattice.max = numpy.array([1] * graph.parametrisation_size)
         for i in graph.contexts:
-            fc.max[i] = graph.contexts[i].target.maximum
+            lattice.max[i] = graph.contexts[i].target.maximum
 
-        return fc
-
-    def invalidate(self):
-        self.min = numpy.array([1])
-        self.max = numpy.array([0])
+        return lattice
 
     def empty(self):
         return (self.min > self.max).any()
 
+    def size(self):
+        return len(self.min)
+
+    def dimension(self):
+        return numpy.sum(self.max - self.min)
+
+    def distance(self, lattice):
+        if self.size() != lattice.size():
+            return
+
+        return numpy.sum(abs(self.min - lattice.min)) + numpy.sum(abs(self.max - lattice.max))
+
+    def issubset(self, lattice):
+        if lattice.empty():
+            return self.empty()
+        elif self.empty():
+            return True
+
+        return (self.min >= lattice.min).all() and (self.max <= lattice.max).all()
+
     def copy(self):
-        copy = Hypercube()
+        copy = Lattice()
         copy.min = numpy.array(self.min)
         copy.max = numpy.array(self.max)
 
         return copy
 
-    def dimension(self):
-        return numpy.sum(self.max - self.min)
+    # noinspection PyAttributeOutsideInit
+    def invalidate(self):
+        self.min = numpy.array([1])
+        self.max = numpy.array([0])
 
-    def distance(self, hc):
-        return numpy.sum(abs(self.min - hc.min)) + numpy.sum(abs(self.max - hc.max))
-
-    def limit(self, context, value):
+    def limit(self, regulator_state_id, value):
         res = False
-        res |= self.limit_min(context, value)
-        res |= self.limit_max(context, value)
+        res |= self.limit_min(regulator_state_id, value)
+        res |= self.limit_max(regulator_state_id, value)
 
         return res
 
-    def limit_min(self, context, value):
-        if (not self.empty()) and (value > self.min[context]):
-            self.min[context] = value
+    def limit_min(self, regulator_state_id, value):
+        if (not self.empty()) and (value > self.min[regulator_state_id]):
+            self.min[regulator_state_id] = value
             return True
 
         return False
 
-    def limit_max(self, context, value):
-        if (not self.empty()) and (value < self.max[context]):
-            self.max[context] = value
+    def limit_max(self, regulator_state_id, value):
+        if (not self.empty()) and (value < self.max[regulator_state_id]):
+            self.max[regulator_state_id] = value
             return True
 
         return False
 
-    def intersect(self, hc):
-        intersection = Hypercube()
+    def intersect(self, lattice):
+        intersection = Lattice()
 
-        if self.empty() or hc.empty():
+        if self.empty() or lattice.empty():
             return intersection
 
-        intersection.min = numpy.maximum(self.min, hc.min)
-        intersection.max = numpy.minimum(self.max, hc.max)
+        intersection.min = numpy.maximum(self.min, lattice.min)
+        intersection.max = numpy.minimum(self.max, lattice.max)
 
         return intersection
 
-    def issubset(self, hc):
-        if hc.empty():
-            return self.empty()
-        elif self.empty():
-            return True
+    def union(self, lattice):
+        union = Lattice()
 
-        return (self.min >= hc.min).all() and (self.max <= hc.max).all()
-
-    def union(self, hc):
-        union = Hypercube()
-
-        union.min = self.min & hc.min
-        union.max = self.max | hc.max
+        union.min = self.min & lattice.min
+        union.max = self.max | lattice.max
 
         return union
 
 
 class ParameterContext:
-    def __init__(self, graph = 0):
+    def __init__(self, graph = None):
         self.open_suprema = dict()
         self.open_infima = dict()
-        if graph:
+
+        if graph is not None:
             self.graph = graph
-            self.interval = Hypercube.full_context(graph)
+            self.lattice = Lattice.full_context(graph)
             for node in graph.nodes:
                 self.open_infima[node] = compute_monotonicity_extremes(node, False)
                 self.open_suprema[node] = compute_monotonicity_extremes(node, True)
             self.observable_edges = set()
 
             for kp in graph.known_parameters:
-                self.limit(graph.contexts[kp],graph.known_parameters[kp])
+                self.limit(graph.contexts[kp], graph.known_parameters[kp])
             for km in graph.known_minimums:
-                self.limit_min(graph.contexts[km],graph.known_minimums[km])
+                self.limit_min(graph.contexts[km], graph.known_minimums[km])
             for km in graph.known_maximums:
-                self.limit_max(graph.contexts[km],graph.known_maximums[km])
+                self.limit_max(graph.contexts[km], graph.known_maximums[km])
 
     def empty(self):
-        return (not self.interval) or self.interval.empty()
+        return (not self.lattice) or self.lattice.empty()
 
     def copy(self):
         copy = ParameterContext()
         copy.graph = self.graph
-        copy.interval = self.interval.copy()
+        copy.lattice = self.lattice.copy()
         for node in self.open_infima:
             copy.open_infima[node] = set(self.open_infima[node])
         for node in self.open_suprema:
@@ -470,137 +476,138 @@ class ParameterContext:
 
         return copy
 
-    def union(self, context):
-        union = self.copy()
-        union.interval = self.interval.union(context.interval)
-        union.open_infima = dict()
-        union.open_suprema = dict()
-        for node in self.graph.nodes:
-            union.open_infima[node] = compute_monotonicity_extremes(node, False)
-            if union.interval.min[union.open_infima[node].id] == union.interval.max[union.open_infima[node].id]:
-                union.close_infimum(union.open_infima[node])
-            union.open_suprema[node] = compute_monotonicity_extremes(node, True)
-            if union.interval.min[union.open_suprema[node].id] == union.interval.max[union.open_suprema[node].id]:
-                union.close_supremum(union.open_suprema[node])
+    def limit(self, regulator_state, value):
+        if self.lattice.limit(regulator_state.id, value):
+            self.check_edge_labels(regulator_state)
 
-    def limit(self, context, value):
-        if self.interval.limit(context.id, value):
-            self.check_edge_labels(context)
+    def limit_min(self, regulator_state, value):
+        if self.lattice.limit_min(regulator_state.id, value):
+            self.check_edge_labels(regulator_state)
 
-    def limit_min(self, context, value):
-        if self.interval.limit_min(context.id, value):
-            self.check_edge_labels(context)
-
-    def limit_max(self, context, value):
-        if self.interval.limit_max(context.id, value):
-            self.check_edge_labels(context)
+    def limit_max(self, regulator_state, value):
+        if self.lattice.limit_max(regulator_state.id, value):
+            self.check_edge_labels(regulator_state)
 
     def intersect(self, pc):
-        changed_indices = (self.interval.min ^ pc.interval.min) | (self.interval.max ^ pc.interval.max)
+        changed_indices = (self.lattice.min ^ pc.lattice.min) | (self.lattice.max ^ pc.lattice.max)
 
-        self.interval = self.interval.intersect(pc.interval)
+        self.lattice = self.lattice.intersect(pc.lattice)
 
         for i in range(0, len(changed_indices)):
             if changed_indices[i]:
                 self.check_edge_labels(self.graph.contexts[i])
 
-    def check_edge_labels(self, context):
-        #t = time.clock()
-        self.check_observable(context)
-        for e in context.edges:
-            if e:
-                sub = context.subcontexts[e.source.id]
-                super = context.supercontexts[e.source.id]
-                if e.monotonous:
-                    if e.monotonous > 0:
-                        if sub:
-                            self.enforce_plus_monotonicity(sub, context)
-                        if super:
-                            self.enforce_plus_monotonicity(context, super)
+    def union(self, context):
+        union = self.copy()
+        union.lattice = self.lattice.union(context.lattice)
+
+        union.open_infima = dict()
+        union.open_suprema = dict()
+
+        for node in self.graph.nodes:
+            union.open_infima[node] = compute_monotonicity_extremes(node, False)
+            if union.lattice.min[union.open_infima[node].id] == union.lattice.max[union.open_infima[node].id]:
+                union.close_infimum(union.open_infima[node])
+            union.open_suprema[node] = compute_monotonicity_extremes(node, True)
+            if union.lattice.min[union.open_suprema[node].id] == union.lattice.max[union.open_suprema[node].id]:
+                union.close_supremum(union.open_suprema[node])
+
+    def check_edge_labels(self, regulator_state):
+        self.check_observable(regulator_state)
+        for edge in regulator_state.edges:
+            if edge:
+                substate = regulator_state.subcontexts[edge.source.id]
+                superstate = regulator_state.supercontexts[edge.source.id]
+                if edge.monotonous:
+                    if edge.monotonous > 0:
+                        if substate:
+                            self.enforce_plus_monotonicity(substate, regulator_state)
+                        if superstate:
+                            self.enforce_plus_monotonicity(regulator_state, superstate)
                     else:
-                        if sub:
-                            self.enforce_minus_monotonicity(sub, context)
-                        if super:
-                            self.enforce_minus_monotonicity(context, super)
-        #t = time.clock() - t
-        #print('{0:.6f}'.format(t))
+                        if substate:
+                            self.enforce_minus_monotonicity(substate, regulator_state)
+                        if superstate:
+                            self.enforce_minus_monotonicity(regulator_state, superstate)
 
-    def enforce_plus_monotonicity(self, sub, super):
-        self.enforce_monotonicity(sub, super)
+    def enforce_plus_monotonicity(self, substate, superstate):
+        self.enforce_monotonicity(substate, superstate)
 
-    def enforce_minus_monotonicity(self, sub, super):
-        self.enforce_monotonicity(super, sub)
+    def enforce_minus_monotonicity(self, substate, superstate):
+        self.enforce_monotonicity(superstate, substate)
 
-    def enforce_monotonicity(self, context0, context1):
+    def enforce_monotonicity(self, lesser_regulator_state, greater_regulator_state):
         if self.empty():
             return
 
-        if self.interval.min[context0.id] > 0:
-            self.limit_min(context1, self.interval.min[context0.id])
-        if self.interval.max[context1.id] < context1.target.maximum:
-            self.limit_max(context0, self.interval.max[context1.id])
+        if self.lattice.min[lesser_regulator_state.id] > 0:
+            self.limit_min(greater_regulator_state, self.lattice.min[lesser_regulator_state.id])
+        if self.lattice.max[greater_regulator_state.id] < greater_regulator_state.target.maximum:
+            self.limit_max(lesser_regulator_state, self.lattice.max[greater_regulator_state.id])
 
-    def close_infimum(self, context):
-        self.open_infima[context.target].remove(context)
+    def close_infimum(self, regulator_state):
+        self.open_infima[regulator_state.target].remove(regulator_state)
 
-        for edge in context.edges:
+        for edge in regulator_state.edges:
             if not edge:
                 continue
-            prime_filter = 0
+            prime_filter = None
             if edge.monotonous < 0:
-                prime_filter = context.subcontexts[edge.source.id]
+                prime_filter = regulator_state.subcontexts[edge.source.id]
             if edge.monotonous > 0:
-                prime_filter = context.supercontexts[edge.source.id]
+                prime_filter = regulator_state.supercontexts[edge.source.id]
             if prime_filter:
-                self.open_infima[context.target].add(prime_filter)
-                if self.interval.min[prime_filter.id] == self.interval.max[prime_filter.id]:
+                self.open_infima[regulator_state.target].add(prime_filter)
+                if self.lattice.min[prime_filter.id] == self.lattice.max[prime_filter.id]:
                     self.close_infimum(prime_filter)
 
-    def close_supremum(self, context):
-        self.open_suprema[context.target].remove(context)
+    def close_supremum(self, regulator_state):
+        self.open_suprema[regulator_state.target].remove(regulator_state)
 
-        for edge in context.edges:
+        for edge in regulator_state.edges:
             if not edge:
                 continue
-            prime_ideal = 0
+            prime_ideal = None
             if edge.monotonous < 0:
-                prime_ideal = context.supercontexts[edge.source.id]
+                prime_ideal = regulator_state.supercontexts[edge.source.id]
             if edge.monotonous > 0:
-                prime_ideal = context.subcontexts[edge.source.id]
+                prime_ideal = regulator_state.subcontexts[edge.source.id]
             if prime_ideal:
-                self.open_suprema[context.target].add(prime_ideal)
-                if self.interval.min[prime_ideal.id] == self.interval.max[prime_ideal.id]:
+                self.open_suprema[regulator_state.target].add(prime_ideal)
+                if self.lattice.min[prime_ideal.id] == self.lattice.max[prime_ideal.id]:
                     self.close_supremum(prime_ideal)
 
-    def check_observable(self, context):
+    def check_observable(self, regulator_state):
         if self.empty():
             return
 
-        if self.interval.min[context.id] == self.interval.max[context.id]:
-            if context in self.open_infima[context.target]:
-                self.close_infimum(context)
-            if context in self.open_suprema[context.target]:
-                self.close_supremum(context)
+        if self.lattice.min[regulator_state.id] == self.lattice.max[regulator_state.id]:
+            if regulator_state in self.open_infima[regulator_state.target]:
+                self.close_infimum(regulator_state)
+            if regulator_state in self.open_suprema[regulator_state.target]:
+                self.close_supremum(regulator_state)
 
-        for edge in context.edges:
+        for edge in regulator_state.edges:
             if edge and edge.observable and (edge not in self.observable_edges):
                 observable = False
-                sub = context.subcontexts[edge.source.id]
-                super = context.supercontexts[edge.source.id]
+                substate = regulator_state.subcontexts[edge.source.id]
+                superstate = regulator_state.supercontexts[edge.source.id]
 
-                while sub:
-                    if (self.interval.min[context.id] > self.interval.max[sub.id]) or (self.interval.min[sub.id] > self.interval.max[context.id]):
+                while substate:
+                    if (self.lattice.min[regulator_state.id] > self.lattice.max[substate.id]) or\
+                            (self.lattice.min[substate.id] > self.lattice.max[regulator_state.id]):
                         self.observable_edges.add(edge)
                         observable |= True
                         break
-                    sub = sub.subcontexts[edge.source.id]
+                    substate = substate.subcontexts[edge.source.id]
 
-                while super:
-                    if (self.interval.min[context.id] > self.interval.max[super.id]) or (self.interval.min[super.id] > self.interval.max[context.id]):
+                while superstate:
+                    if (self.lattice.min[regulator_state.id] > self.lattice.max[superstate.id]) or\
+                            (self.lattice.min[superstate.id] > self.lattice.max[regulator_state.id]):
                         self.observable_edges.add(edge)
                         observable |= True
                         break
-                    super = super.supercontexts[edge.source.id]
+                    superstate = superstate.supercontexts[edge.source.id]
 
                 if not observable:
                     if len(self.open_infima) == 1:
@@ -608,49 +615,49 @@ class ParameterContext:
                     if len(self.open_suprema) == 1:
                         self.enforce_observability_lower(edge)
                     if len(self.open_infima) + len(self.open_suprema) == 0:
-                        self.interval.invalidate()
+                        self.lattice.invalidate()
 
     def enforce_observability_upper(self, edge):
         for infimum in self.open_infima[edge.target]:
             suprema_agree = True
-            sub = infimum.subcontexts[edge.source]
-            super = infimum.supercontexts[edge.source]
+            substate = infimum.subcontexts[edge.source]
+            superstate = infimum.supercontexts[edge.source]
 
-            while sub:
-                if self.interval.max[infimum.id] != self.interval.max[sub.id]:
+            while substate:
+                if self.lattice.max[infimum.id] != self.lattice.max[substate.id]:
                     suprema_agree = False
                     break
-                sub = sub.subcontexts[edge.source]
+                substate = substate.subcontexts[edge.source]
 
-            while super:
-                if self.interval.max[infimum.id] != self.interval.max[super.id]:
+            while superstate:
+                if self.lattice.max[infimum.id] != self.lattice.max[superstate.id]:
                     suprema_agree = False
                     break
-                super = super.supercontexts[edge.source]
+                superstate = superstate.supercontexts[edge.source]
 
             if suprema_agree:
-                self.limit_max(infimum, self.interval.max[infimum.id] - 1)
+                self.limit_max(infimum, self.lattice.max[infimum.id] - 1)
 
     def enforce_observability_lower(self, edge):
         for supremum in self.open_suprema[edge.target]:
             infima_agree = True
-            sub = supremum.subcontexts[edge.source]
-            super = supremum.supercontexts[edge.source]
+            substate = supremum.subcontexts[edge.source]
+            superstate = supremum.supercontexts[edge.source]
 
-            while sub:
-                if self.interval.min[supremum.id] != self.interval.min[sub.id]:
+            while substate:
+                if self.lattice.min[supremum.id] != self.lattice.min[substate.id]:
                     infima_agree = False
                     break
-                sub = sub.subcontexts[edge.source]
+                substate = substate.subcontexts[edge.source]
 
-            while super:
-                if self.interval.min[supremum.id] != self.interval.min[super.id]:
+            while superstate:
+                if self.lattice.min[supremum.id] != self.lattice.min[superstate.id]:
                     infima_agree = False
                     break
-                super = super.supercontexts[edge.source]
+                superstate = superstate.supercontexts[edge.source]
 
             if infima_agree:
-                self.limit_min(supremum, self.interval.min[supremum.id] + 1)
+                self.limit_min(supremum, self.lattice.min[supremum.id] + 1)
 
 
 def compute_monotonicity_extremes(node, positive):

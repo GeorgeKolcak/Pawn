@@ -113,7 +113,7 @@ class RegulatoryGraph:
         return new_graph
 
     def get_node(self, node):
-        if common.IsNumber(node):
+        if common.is_number(node):
             return self.nodes[int(node)]
 
         for n in self.nodes:
@@ -122,7 +122,7 @@ class RegulatoryGraph:
 
     def build_marking(self, marking_string):
         marking = [0] * len(self.nodes)
-        if common.IsNumber(marking_string):
+        if common.is_number(marking_string):
             for i in range(0, len(self.nodes)):
                 marking[i] = int(marking_string[i])
         else:
