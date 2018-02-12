@@ -277,55 +277,55 @@ class Event:
 class MarkingTableEntry:
     def __init__(self):
         self.events = set()
-        self.contexts = []
+        self.lattices = []
 
     def add_event(self, event):
         self.events.add(event)
 
-    def add_context(self, hc, event):
-        dim = hc.dimension()
+    def add_context(self, lattice, event=None):
+        dimension = lattice.dimension()
         found = False
         i = 0
-        while i < len(self.contexts):
-            cdim = self.contexts[i].dimension()
-            if cdim > dim:
-                if hc.issubset(self.contexts[i]):
+        while i < len(self.lattices):
+            existing_dimension = self.lattices[i].dimension()
+            if existing_dimension > dimension:
+                if lattice.issubset(self.lattices[i]):
                     found = True
                     break
-            elif cdim == dim:
-                dist = self.contexts[i].distance(hc)
-                if not dist:
+            elif existing_dimension == dimension:
+                distance = self.lattices[i].distance(lattice)
+                if not distance:
                     found = True
                     break
-                elif dist == 1:
-                    union = self.contexts[i].union(hc)
-                    self.contexts.remove(self.contexts[i])
+                elif distance == 1:
+                    union = self.lattices[i].union(lattice)
+                    self.lattices.remove(self.lattices[i])
                     self.add_context(union)
                     found = True
                     break
-            elif cdim < dim:
+            elif existing_dimension < dimension:
                 if not found:
                     found = True
-                    self.contexts.insert(i, hc)
+                    self.lattices.insert(i, lattice)
                     i += 1
-                if self.contexts[i].issubset(hc):
-                    self.contexts.remove(self.contexts[i])
+                if self.lattices[i].issubset(lattice):
+                    self.lattices.remove(self.lattices[i])
                     i -= 1
             i += 1
 
         if not found:
-            self.contexts.append(hc)
+            self.lattices.append(lattice)
 
-        backwardsCutoffs = set()
-        for e in self.events:
-            if (not e.cutoff) and (e != event) and e.parameter_context.lattice.issubset(hc):
-                e.cutoff = True
-                backwardsCutoffs.add(e)
-        return backwardsCutoffs
+        backwards_cutoffs = set()
+        for existing_event in self.events:
+            if (not existing_event.cutoff) and (existing_event != event) and existing_event.parameter_context.lattice.issubset(lattice):
+                existing_event.cutoff = True
+                backwards_cutoffs.add(existing_event)
+        return backwards_cutoffs
 
     def is_cutoff(self, event):
-        for c in self.contexts:
-            if event.parameter_context.lattice.issubset(c):
+        for lattice in self.lattices:
+            if event.parameter_context.lattice.issubset(lattice):
                 return True
 
         return False
@@ -336,11 +336,11 @@ class MarkingTableEntry:
                 print(str(event) + ' not possible, empty parameter context')
             return False
 
-        for e in self.events:
-            if (e.target == event.target) and (e.context == event.context):
+        for existing_event in self.events:
+            if (existing_event.target == event.target) and (existing_event.context == event.context):
                 different = False
-                for c in e.preset:
-                    if c not in event.preset:
+                for condition in existing_event.preset:
+                    if condition not in event.preset:
                         different = True
                         break
                 if not different:
