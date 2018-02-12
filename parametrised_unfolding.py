@@ -72,7 +72,7 @@ class Unfolding:
         table_entry = self.get_table_entry(event.marking)
         event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
         if not event.cutoff:
-            backhandCutoffs = table_entry.add_context(event.parameter_context.lattice, event)
+            backhandCutoffs = table_entry.add_context(event.parameter_context.bounds(), event)
             for bc in backhandCutoffs:
                 self.remove_suffix(bc, pe_queue)
 
@@ -319,14 +319,14 @@ class MarkingTableEntry:
 
         backwardsCutoffs = set()
         for e in self.events:
-            if (not e.cutoff) and (e != event) and e.parameter_context.lattice.issubset(hc):
+            if (not e.cutoff) and (e != event) and e.parameter_context.bounds().issubset(hc):
                 e.cutoff = True
                 backwardsCutoffs.add(e)
         return backwardsCutoffs
 
     def is_cutoff(self, event):
         for c in self.contexts:
-            if event.parameter_context.lattice.issubset(c):
+            if event.parameter_context.bounds().issubset(c):
                 return True
 
         return False
@@ -464,6 +464,9 @@ class ParameterContext:
 
     def empty(self):
         return (not self.lattice) or self.lattice.empty()
+
+    def bounds(self):
+        return self.lattice
 
     def copy(self):
         copy = ParameterContext()

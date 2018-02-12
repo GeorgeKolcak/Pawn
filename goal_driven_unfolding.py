@@ -10,6 +10,9 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
     def empty(self):
         return (not self.soft_limit) or self.soft_limit.empty()
 
+    def bounds(self):
+        return self.soft_limit
+
     def copy(self):
         copy = super().copy()
 
