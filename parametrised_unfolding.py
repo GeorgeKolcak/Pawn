@@ -185,61 +185,61 @@ class Event:
         self.target = 0
         self.target_value = 0
         self.nature = 1
-        self.context = 0
+        self.regulator_state = None
         self.preset = set()
         self.poset = set()
         self.marking = []
         self.local_configuration = set()
         self.local_configuration.add(self)
-        self.parikh = 0
-        self.foata = 0
-        self.parameter_context = 0
+        self.parikh = None
+        self.foata = None
+        self.parameter_context = None
         self.cutoff = False
         self.goal = False
 
     def init_from_preset(self, initial_marking, initial_context):
         self.marking = list(initial_marking)
 
-        for c in self.preset:
-            if c.parent:
-                self.local_configuration |= c.parent.local_configuration
+        for condition in self.preset:
+            if condition.parent:
+                self.local_configuration |= condition.parent.local_configuration
                 if not self.parameter_context:
-                    self.parameter_context = c.parent.parameter_context.copy()
+                    self.parameter_context = condition.parent.parameter_context.copy()
                 else:
-                    self.parameter_context.intersect(c.parent.parameter_context)
+                    self.parameter_context.intersect(condition.parent.parameter_context)
 
-        for e in self.local_configuration:
-            self.marking[e.target.id] += e.nature
+        for event in self.local_configuration:
+            self.marking[event.target.id] += event.nature
 
         if not self.parameter_context:
             self.parameter_context = initial_context.copy()
 
         if self.nature > 0:
-            self.parameter_context.limit_min(self.context, self.target_value)
+            self.parameter_context.limit_min(self.regulator_state, self.target_value)
         else:
-            self.parameter_context.limit_max(self.context, self.target_value)
+            self.parameter_context.limit_max(self.regulator_state, self.target_value)
 
     def compute_foata(self):
         self.foata = []
         temp_events = set(self.local_configuration)
 
         foata_level = set()
-        for e in self.local_configuration:
-            if len(e.local_configuration) == 1:
-                foata_level.add(e)
-                temp_events.remove(e)
+        for event in self.local_configuration:
+            if len(event.local_configuration) == 1:
+                foata_level.add(event)
+                temp_events.remove(event)
 
         while len(foata_level):
             self.foata.append(compute_parkih_vector(foata_level))
             foata_level = set()
-            for e in temp_events:
+            for temp_event in temp_events:
                 this_level = True
-                for ee in e.local_configuration:
-                    if (ee in temp_events) and (ee != e):
+                for predecessor_event in temp_event.local_configuration:
+                    if (predecessor_event in temp_events) and (predecessor_event != temp_event):
                         this_level = False
                         break
                 if this_level:
-                    foata_level.add(e)
+                    foata_level.add(temp_event)
 
             temp_events -= foata_level
 
@@ -247,20 +247,20 @@ class Event:
         if len(self.local_configuration) != len(event.local_configuration):
             return len(self.local_configuration) - len(event.local_configuration)
 
-        if not self.parikh:
+        if self.parikh is None:
             self.parikh = compute_parkih_vector(self.local_configuration)
 
-        if not event.parikh:
+        if event.parikh is None:
             event.parikh = compute_parkih_vector(event.local_configuration)
 
-        res = parikh_compare(self.parikh, event.parikh)
-        if res:
-            return res
+        result = parikh_compare(self.parikh, event.parikh)
+        if result:
+            return result
 
-        if not self.foata:
+        if self.foata is None:
             self.compute_foata()
 
-        if not event.foata:
+        if event.foata is None:
             event.compute_foata()
 
         return foata_compare(self.foata, event.foata)
@@ -337,7 +337,7 @@ class MarkingTableEntry:
             return False
 
         for existing_event in self.events:
-            if (existing_event.target == event.target) and (existing_event.context == event.context):
+            if (existing_event.target == event.target) and (existing_event.regulator_state == event.regulator_state):
                 different = False
                 for condition in existing_event.preset:
                     if condition not in event.preset:
@@ -442,7 +442,7 @@ class Lattice:
 
 
 class ParameterContext:
-    def __init__(self, graph = None):
+    def __init__(self, graph=None):
         self.open_suprema = dict()
         self.open_infima = dict()
 
@@ -700,23 +700,23 @@ def compute_parkih_vector(events):
 
     for i in range(0,len(events)):
         for event in events:
-            if (not i) or (event.context.id > parikh[i - 1].context.id) or\
-                    ((event.context.id == parikh[i-1].context.id) and (event.target_value >= parikh[i-1].target_value)):
-                if (not parikh[i]) or (event.context.id < parikh[i].context.id) or\
-                        ((event.context.id == parikh[i].context.id) and (event.target_value < parikh[i].target_value)):
+            if (not i) or (event.regulator_state.id > parikh[i - 1].regulator_state.id) or\
+                    ((event.regulator_state.id == parikh[i - 1].regulator_state.id) and (event.target_value >= parikh[i - 1].target_value)):
+                if (not parikh[i]) or (event.regulator_state.id < parikh[i].regulator_state.id) or\
+                        ((event.regulator_state.id == parikh[i].regulator_state.id) and (event.target_value < parikh[i].target_value)):
                     parikh[i] = event
 
     return parikh
 
 
-def parikh_compare(vec1, vec2):
-    for i in range(0, min(len(vec1), len(vec2))):
-        if vec1[i].context.id != vec2[i].context.id:
-            return vec1[i].context.id - vec2[i].context.id
-        elif vec1[i].target_value != vec2[i].target_value:
-            return vec1[i].target_value - vec2[i].target_value
+def parikh_compare(vector1, vector2):
+    for i in range(0, min(len(vector1), len(vector2))):
+        if vector1[i].regulator_state.id != vector2[i].regulator_state.id:
+            return vector1[i].regulator_state.id - vector2[i].regulator_state.id
+        elif vector1[i].target_value != vector2[i].target_value:
+            return vector1[i].target_value - vector2[i].target_value
 
-    return len(vec1) - len(vec2)
+    return len(vector1) - len(vector2)
 
 
 def foata_compare(foata1, foata2):
@@ -808,7 +808,7 @@ def possible_extension(unfolding, condition, queue):
                     inhibit_event.target = node
                     inhibit_event.target_value = (target_cond.value - 1)
                     inhibit_event.nature = -1
-                    inhibit_event.context = regulator_state
+                    inhibit_event.regulator_state = regulator_state
                     inhibit_event.preset = possible_preset
                     enqueue_event(unfolding, queue, inhibit_event)
                 if target_cond.value < node.maximum:
@@ -816,7 +816,7 @@ def possible_extension(unfolding, condition, queue):
                     activ_event.target = node
                     activ_event.target_value = (target_cond.value + 1)
                     activ_event.nature = 1
-                    activ_event.context = regulator_state
+                    activ_event.regulator_state = regulator_state
                     activ_event.preset = possible_preset
                     enqueue_event(unfolding, queue, activ_event)
 
