@@ -48,7 +48,6 @@ class PossibleExtensionQueue:
         self.possible_extensions.remove(event)
 
 
-
 class Unfolding:
     def __init__(self, graph, initial_marking, initial_context):
         self.conditions = []
@@ -328,7 +327,7 @@ class MarkingTableEntry:
 
     def is_cutoff(self, event):
         for c in self.contexts:
-            if event.parameter_context.interval.issubset(c):
+            if event.parameter_context.issubset(c):
                 return True
 
         return False
@@ -482,6 +481,15 @@ class ParameterContext:
             union.open_suprema[node] = compute_monotonicity_extremes(node, True)
             if union.interval.min[union.open_suprema[node].id] == union.interval.max[union.open_suprema[node].id]:
                 union.close_supremum(union.open_suprema[node])
+
+    def issubset(self, context):
+        if self.empty():
+            return True
+        elif context.empty():
+            return self.empty()
+
+        return self.interval.issubset(context.interval)
+
 
     def limit(self, context, value):
         if self.interval.limit(context.id, value):
