@@ -46,8 +46,8 @@ elif len(args) == 1:
     input_file_name = args[0]
     output_file_name = input_file_name.split(".")[0] + ".dot"
 else:
-    input_file_name = args[0];
-    output_file_name = args[1];
+    input_file_name = args[0]
+    output_file_name = args[1]
 
 if timed:
     exec_time = time.clock()
@@ -60,51 +60,51 @@ if target:
         print('The specified marking "' + target + '" does not match the system definition. Usage: Pawn <input file> [<output file>,-v,-g <target node>]')
         exit(2)
 
-unf = parametrised_unfolding.unfold(graph)
+unfolding = parametrised_unfolding.unfold(graph)
 
 output = open(output_file_name, 'w')
 
 output.write("digraph {\n")
 
-for c in unf.conditions:
-    output.write('c' + str(c.id) + ' [label="' + c.node.name + str(c.value) + '(c' + str(c.id) + ')" shape=circle];\n')
+for condition in unfolding.conditions:
+    output.write('c' + str(condition.id) + ' [label="' + condition.node.name + str(condition.value) + '(c' + str(condition.id) + ')" shape=circle];\n')
 
-ev_count = 0
-co_count = 0
-for e in unf.events:
-    ev_count += 1
+event_count = 0
+cutoff_count = 0
+for event in unfolding.events:
+    event_count += 1
     context_string = ''
     for i in range(0, len(graph.nodes)):
-        if (e.context.regulators[i] > 0):
-            context_string += (',' + graph.nodes[i].name + str(e.context.regulators[i]))
+        if event.regulator_state.regulators[i] > 0:
+            context_string += (',' + graph.nodes[i].name + str(event.regulator_state.regulators[i]))
     context_string = context_string[1:]
-    hcstring = ''
-    if not e.parameter_context.empty():
-        for i in e.parameter_context.lattice.min:
-            hcstring += str(i)
-        hcstring+='-'
-        for i in e.parameter_context.lattice.max:
-            hcstring += str(i)
+    bounds_string = ''
+    if not event.parameter_context.empty():
+        for i in event.parameter_context.lattice.min:
+            bounds_string += str(i)
+        bounds_string+='-'
+        for i in event.parameter_context.lattice.max:
+            bounds_string += str(i)
     else:
-        hcstring = 'none'
+        bounds_string = 'none'
     marking_string = ''
     for i in range(0, len(graph.nodes)):
-        if (e.marking[i] > 0):
-            marking_string += (',' + graph.nodes[i].name + str(e.marking[i]))
+        if (event.marking[i] > 0):
+            marking_string += (',' + graph.nodes[i].name + str(event.marking[i]))
     marking_string = marking_string[1:]
-    output.write('e' + str(e.id) + ' [label="' + e.target.name + str(e.target_value) + '{' + context_string + '}' + '(e' + str(e.id) + ')' + hcstring + '{' + marking_string + '}" shape=box')
-    if e.cutoff:
-        co_count += 1
+    output.write('e' + str(event.id) + ' [label="' + event.target.name + str(event.target_value) + '{' + context_string + '}' + '(e' + str(event.id) + ')' + bounds_string + '{' + marking_string + '}" shape=box')
+    if event.cutoff:
+        cutoff_count += 1
         output.write(' style=dashed')
-    if e.goal:
+    if event.goal:
         output.write(' color=crimson')
     output.write('];\n')
-    for c in e.preset:
-        output.write('c' + str(c.id) + ' -> e' + str(e.id) + ';\n')
-    for c in e.poset:
-        output.write('e' + str(e.id) + ' -> c' + str(c.id) + ';\n')
+    for condition in event.preset:
+        output.write('c' + str(condition.id) + ' -> e' + str(event.id) + ';\n')
+    for condition in event.poset:
+        output.write('e' + str(event.id) + ' -> c' + str(condition.id) + ';\n')
 
-output.write('graph [label="' + str(ev_count) + ' events (' + str(ev_count - co_count) + '/' + str(co_count) + ' non-/cutoff)"]\n}')
+output.write('graph [label="' + str(event_count) + ' events (' + str(event_count - cutoff_count) + '/' + str(cutoff_count) + ' non-/cutoff)"]\n}')
 
 output.close()
 
