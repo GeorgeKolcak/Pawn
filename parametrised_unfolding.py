@@ -55,11 +55,22 @@ class Unfolding:
         self.discarded_events = []
         self.initial_marking = list(initial_marking)
         self.initial_context = initial_context.copy()
-        self.marking_table = [0]
+        self.marking_table = [None]
         self.graph = graph
-        for n in graph.nodes:
-            for i in range(0,((n.maximum // 2) + 1)):
+        for node in graph.nodes:
+            for i in range(0,((node.maximum // 2) + 1)):
                 self.marking_table += self.marking_table
+
+    def get_table_entry(self, marking):
+        index = 0
+        for node in self.graph.nodes:
+            index *= (2 ** ((node.maximum // 2) + 1))
+            index += marking[node.id]
+
+        if not self.marking_table[index]:
+            self.marking_table[index] = MarkingTableEntry()
+
+        return self.marking_table[index]
 
     def add_event(self, pe_queue, add_extensions = True):
         if len(pe_queue) <= 0:
@@ -71,84 +82,73 @@ class Unfolding:
         table_entry = self.get_table_entry(event.marking)
         event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
         if not event.cutoff:
-            backhandCutoffs = table_entry.add_context(event.parameter_context.lattice, event)
-            for bc in backhandCutoffs:
+            backhand_cutoffs = table_entry.add_context(event.parameter_context.lattice, event)
+            for bc in backhand_cutoffs:
                 self.remove_suffix(bc, pe_queue)
 
         if verbose:
             print('Adding ' + str(event))
             print('Event count: ' + str(len(self.events)))
 
-        for c in event.preset:
-            cond = c.copy()
-            cond.id = len(self.conditions)
-            if c.node == event.target:
-                cond.value = event.target_value
-            cond.parent = event
+        for condition in event.preset:
+            new_condition = condition.copy()
+            new_condition.id = len(self.conditions)
+            if condition.node == event.target:
+                new_condition.value = event.target_value
+            new_condition.parent = event
 
-            parent_coset = 0
-            for cc in event.preset:
-                if not parent_coset:
-                    parent_coset = set(cc.coset)
+            parent_coset = None
+            for parent_condition in event.preset:
+                if parent_coset is None:
+                    parent_coset = set(parent_condition.coset)
                 else:
-                    parent_coset &= cc.coset
+                    parent_coset &= parent_condition.coset
 
-            event.poset.add(cond)
-            self.conditions.append(cond)
+            event.poset.add(new_condition)
+            self.conditions.append(new_condition)
 
             if event.cutoff or event.goal:
                 continue
 
-            cond.coset |= parent_coset
-            cond.coset |= event.poset
-            cond.coset -= event.preset
+            new_condition.coset |= parent_coset
+            new_condition.coset |= event.poset
+            new_condition.coset -= event.preset
 
-            for cc in cond.coset:
-                cc.coset.add(cond)
+            for concurrent_condition in new_condition.coset:
+                concurrent_condition.coset.add(new_condition)
 
             if add_extensions:
-                possible_extension(self, cond, pe_queue)
+                possible_extension(self, new_condition, pe_queue)
 
         return event
 
-    def get_table_entry(self, marking):
-        index = 0
-        for n in self.graph.nodes:
-            index *= (2 ** ((n.maximum // 2) + 1))
-            index += marking[n.id]
-
-        if not self.marking_table[index]:
-            self.marking_table[index] = MarkingTableEntry()
-
-        return self.marking_table[index]
-
     def remove_suffix(self, event, queue):
-        for cond in event.poset:
-            for e in cond.poset:
-                self.remove_event(e, queue)
-            cond.poset = set()
+        for condition in event.poset:
+            for successor_event in condition.poset:
+                self.remove_event(successor_event, queue)
+            condition.poset = set()
 
-    def remove_condition(self, cond, queue):
-        for event in cond.poset:
+    def remove_condition(self, condition, queue):
+        for event in condition.poset:
             self.remove_event(event, queue)
 
-        for cocond in cond.coset:
-            if cocond != cond:
+        for concurrent_condition in condition.coset:
+            if concurrent_condition != condition:
                 try:
-                    cocond.coset.remove(cond)
+                    concurrent_condition.coset.remove(condition)
                 except KeyError:
                     pass
 
         try:
-            self.conditions.remove(cond)
+            self.conditions.remove(condition)
         except ValueError:
             pass
 
     def remove_event(self, event, queue):
         self.discarded_events.append(event)
 
-        for cond in event.poset:
-            self.remove_condition(cond, queue)
+        for condition in event.poset:
+            self.remove_condition(condition, queue)
 
         try:
             self.events.remove(event)
@@ -162,9 +162,9 @@ class Unfolding:
 class Condition:
     def __init__(self):
         self.id = 0
-        self.node = 0
+        self.node = None
         self.value = 0
-        self.parent = 0
+        self.parent = None
         self.poset = set()
         self.coset = set()
         self.coset.add(self)
@@ -182,7 +182,7 @@ class Condition:
 class Event:
     def __init__(self):
         self.id = 0
-        self.target = 0
+        self.target = None
         self.target_value = 0
         self.nature = 1
         self.regulator_state = None
@@ -266,12 +266,12 @@ class Event:
         return foata_compare(self.foata, event.foata)
 
     def __str__(self):
-        prestr = ''
-        for c in self.preset:
-            prestr += (',' + str(c))
-        prestr = prestr[1:]
+        preset_string = ''
+        for condition in self.preset:
+            preset_string += (',' + str(condition))
+            preset_string = preset_string[1:]
 
-        return '{' + prestr + '}->' + self.target.name + str(self.target_value)
+        return '{' + preset_string + '}->' + self.target.name + str(self.target_value)
 
 
 class MarkingTableEntry:
@@ -730,13 +730,13 @@ def foata_compare(foata1, foata2):
 
 def possible_extension(unfolding, condition, queue):
     coset_nodes = 0
-    node_cosets = [0] * len(unfolding.graph.nodes)
-    for cocond in condition.coset:
-        if not node_cosets[cocond.node.id]:
-            node_cosets[cocond.node.id] = []
-        node_cosets[cocond.node.id].append(cocond)
-        if not (coset_nodes & (1 << cocond.node.id)):
-            coset_nodes += (1 << cocond.node.id)
+    node_cosets = [None] * len(unfolding.graph.nodes)
+    for concurrent_condition in condition.coset:
+        if not node_cosets[concurrent_condition.node.id]:
+            node_cosets[concurrent_condition.node.id] = []
+        node_cosets[concurrent_condition.node.id].append(concurrent_condition)
+        if not (coset_nodes & (1 << concurrent_condition.node.id)):
+            coset_nodes += (1 << concurrent_condition.node.id)
 
     for node in unfolding.graph.nodes:
         if ((node.regulators ^ coset_nodes) & node.regulators) or (not node_cosets[node.id]):
@@ -746,9 +746,9 @@ def possible_extension(unfolding, condition, queue):
         if node.regulators & (1 << node.id):
             prefab_presets.append(set())
         else:
-            for cocond in node_cosets[node.id]:
+            for concurrent_condition in node_cosets[node.id]:
                 prefab_preset = set()
-                prefab_preset.add(cocond)
+                prefab_preset.add(concurrent_condition)
                 prefab_presets.append(prefab_preset)
 
         if not prefab_presets:
@@ -759,23 +759,23 @@ def possible_extension(unfolding, condition, queue):
             for i in range(0,len(unfolding.graph.nodes)):
                 if (node.regulators & (1 << i)) and node_cosets[i]:
                     new_possible_presets = []
-                    for cocond in node_cosets[i]:
+                    for concurrent_condition in node_cosets[i]:
                         if regulator_state.edges[i].threshold:
                             if ((regulator_state.regulators[i] == 0) and
-                                        (cocond.value < regulator_state.edges[i].threshold)) or\
+                                        (concurrent_condition.value < regulator_state.edges[i].threshold)) or\
                                     ((regulator_state.regulators[i] == unfolding.graph.nodes[i].maximum) and
-                                         (cocond.value >= regulator_state.edges[i].threshold)):
+                                         (concurrent_condition.value >= regulator_state.edges[i].threshold)):
                                 for possible_preset in possible_presets:
-                                    if (possible_preset.issubset(cocond.coset)):
+                                    if possible_preset.issubset(concurrent_condition.coset):
                                         npp = set(possible_preset)
-                                        npp.add(cocond)
+                                        npp.add(concurrent_condition)
                                         new_possible_presets.append(npp)
                         else:
-                            if regulator_state.regulators[i] == cocond.value:
+                            if regulator_state.regulators[i] == concurrent_condition.value:
                                 for possible_preset in possible_presets:
-                                    if (possible_preset.issubset(cocond.coset)):
+                                    if possible_preset.issubset(concurrent_condition.coset):
                                         npp = set(possible_preset)
-                                        npp.add(cocond)
+                                        npp.add(concurrent_condition)
                                         new_possible_presets.append(npp)
                     if not new_possible_presets:
                         break
@@ -784,8 +784,8 @@ def possible_extension(unfolding, condition, queue):
 
             for possible_preset in possible_presets:
                 preset_hash = 0
-                for cocond in possible_preset:
-                    preset_hash += (1 << cocond.node.id)
+                for concurrent_condition in possible_preset:
+                    preset_hash += (1 << concurrent_condition.node.id)
 
                 if node.regulators & (1 << node.id):
                     if preset_hash != node.regulators:
@@ -794,27 +794,27 @@ def possible_extension(unfolding, condition, queue):
                     if preset_hash != (node.regulators + (1 << node.id)):
                         continue
 
-                target_cond = 0
-                for cocond in possible_preset:
-                    if cocond.node == node:
-                        target_cond = cocond
+                target_condition = None
+                for concurrent_condition in possible_preset:
+                    if concurrent_condition.node == node:
+                        target_condition = concurrent_condition
                         break
 
-                if not target_cond:
+                if not target_condition:
                     continue
 
-                if target_cond.value > 0:
+                if target_condition.value > 0:
                     inhibit_event = Event()
                     inhibit_event.target = node
-                    inhibit_event.target_value = (target_cond.value - 1)
+                    inhibit_event.target_value = (target_condition.value - 1)
                     inhibit_event.nature = -1
                     inhibit_event.regulator_state = regulator_state
                     inhibit_event.preset = possible_preset
                     enqueue_event(unfolding, queue, inhibit_event)
-                if target_cond.value < node.maximum:
+                if target_condition.value < node.maximum:
                     activ_event = Event()
                     activ_event.target = node
-                    activ_event.target_value = (target_cond.value + 1)
+                    activ_event.target_value = (target_condition.value + 1)
                     activ_event.nature = 1
                     activ_event.regulator_state = regulator_state
                     activ_event.preset = possible_preset
@@ -830,32 +830,32 @@ def enqueue_event(unfolding, queue, event):
         table_entry.add_event(event)
 
         event.id = len(unfolding.events) + len(unfolding.discarded_events) + len(queue)
-        for c in event.preset:
-            c.poset.add(event)
+        for condition in event.preset:
+            condition.poset.add(event)
 
         queue.push(event)
 
 
-def init_unfolding(graph, initial_marking = None, initial_context = None):
+def init_unfolding(graph, initial_marking=None, initial_context=None):
     if not initial_marking:
         initial_marking = []
-        for n in graph.nodes:
-            initial_marking.append(n.initial)
+        for node in graph.nodes:
+            initial_marking.append(node.initial)
 
     if not initial_context:
         initial_context = ParameterContext(graph)
 
     unfolding = Unfolding(graph, initial_marking, initial_context)
 
-    for n in graph.nodes:
-        cond = Condition()
-        cond.id = len(unfolding.conditions)
-        cond.node = n
-        cond.value = initial_marking[n.id]
-        for c in unfolding.conditions:
-            c.coset.add(cond)
-            cond.coset.add(c)
-        unfolding.conditions.append(cond)
+    for node in graph.nodes:
+        initial_condition = Condition()
+        initial_condition.id = len(unfolding.conditions)
+        initial_condition.node = node
+        initial_condition.value = initial_marking[node.id]
+        for condition in unfolding.conditions:
+            condition.coset.add(initial_condition)
+            initial_condition.coset.add(condition)
+        unfolding.conditions.append(initial_condition)
 
     return unfolding
 
