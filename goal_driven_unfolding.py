@@ -5,7 +5,7 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
     def __init__(self, graph = 0):
         super().__init__(graph)
 
-        self.soft_limit = self.interval.copy()
+        self.soft_limit = self.lattice.copy()
 
     def empty(self):
         return (not self.soft_limit) or self.soft_limit.empty()
