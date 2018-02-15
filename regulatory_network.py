@@ -12,7 +12,7 @@ class Node:
         self.initial = 0
         self.regulators = 0
         self.regulator_count = 0
-        self.regulatory_states = []
+        self.regulator_states = []
         self.maximum = 1
 
     def __str__(self):
@@ -32,7 +32,7 @@ class Edge:
         return str(self.id) + ':' + str(self.source) + '->' + str(self.target)
 
 
-class RegulatoryState:
+class RegulatorState:
     def __init__(self, graph, target):
         self.id = 0
         self.target = target
@@ -45,7 +45,7 @@ class RegulatoryState:
         self.edges[edge.source.id] = edge
         extended_states = []
         for val in range(1, (edge.source.maximum + 1)):
-            extended_state = RegulatoryState(graph, self.target)
+            extended_state = RegulatorState(graph, self.target)
             extended_state.id = graph.parametrisation_size
             extended_state.regulators = numpy.array(self.regulators)
             extended_state.regulators[edge.source.id] = val
@@ -161,15 +161,15 @@ def parse_regulatory_graph(filename):
         edge.target = graph.get_node(node_strings[1].strip())
 
         if edge.target.regulator_count == 0:
-            empty_regulator_state = RegulatoryState(graph, edge.target)
+            empty_regulator_state = RegulatorState(graph, edge.target)
             empty_regulator_state.id = graph.parametrisation_size
             graph.parametrisation_size += 1
-            edge.target.regulatory_states.append(empty_regulator_state)
+            edge.target.regulator_states.append(empty_regulator_state)
             graph.regulator_states[empty_regulator_state.id] = empty_regulator_state
 
         edge.target.regulators += (1 << edge.source.id)
         edge.target.regulator_count += 1
-        substates = list(edge.target.regulatory_states)
+        substates = list(edge.target.regulator_states)
 
         if len(substrings) > 1:
             if '+' in substrings[1]:
@@ -184,7 +184,7 @@ def parse_regulatory_graph(filename):
 
         for regulator_state in substates:
             extended_regulator_state = regulator_state.extend(graph, edge)
-            edge.target.regulatory_states += extended_regulator_state
+            edge.target.regulator_states += extended_regulator_state
         
         graph.edges.append(edge)
         
@@ -193,11 +193,11 @@ def parse_regulatory_graph(filename):
     line = prn_file.readline()
 
     for node in graph.nodes:
-        if node.regulatory_states:
+        if node.regulator_states:
             possible = minmax
             inhibitors = numpy.array([0] * len(graph.nodes))
             activators = numpy.array([0] * len(graph.nodes))
-            for edge in node.regulatory_states[0].edges:
+            for edge in node.regulator_states[0].edges:
                 if not edge:
                     continue
                 if edge.monotonous:
@@ -213,17 +213,17 @@ def parse_regulatory_graph(filename):
                 if edge.observable:
                     possible |= True
             if possible:
-                for regulatory_state in node.regulatory_states:
-                    if (regulatory_state.regulators == inhibitors).all():
+                for regulator_state in node.regulator_states:
+                    if (regulator_state.regulators == inhibitors).all():
                         if minmax:
-                            graph.known_maximums[regulatory_state.id] = 0
+                            graph.known_maximums[regulator_state.id] = 0
                         else:
-                            graph.known_maximums[regulatory_state.id] = (node.maximum - 1)
-                    if (regulatory_state.regulators == activators).all():
+                            graph.known_maximums[regulator_state.id] = (node.maximum - 1)
+                    if (regulator_state.regulators == activators).all():
                         if minmax:
-                            graph.known_minimums[regulatory_state.id] = node.maximum
+                            graph.known_minimums[regulator_state.id] = node.maximum
                         else:
-                            graph.known_minimums[regulatory_state.id] = 1
+                            graph.known_minimums[regulator_state.id] = 1
 
     while line and (not line.isspace()):
         substrings = line.split('|')
@@ -249,7 +249,7 @@ def parse_regulatory_graph(filename):
                     regulators[regulator.id] = int(regulator_value_strings[1])
         value = int(operator_strings[1])
 
-        for regulator_state in target.regulatory_states:
+        for regulator_state in target.regulator_states:
             if (regulators == regulator_state.regulators).all():
                 if not mode:
                     graph.known_parameters[regulator_state.id] = value

@@ -661,13 +661,13 @@ class ParameterContext:
 
 
 def compute_monotonicity_extremes(node, positive):
-    if not node.regulatory_states:
+    if not node.regulator_states:
         return set()
 
     inhibitors = []
     activators = []
 
-    for edge in node.regulatory_states[0].edges:
+    for edge in node.regulator_states[0].edges:
         if not edge:
             continue
         if edge.monotonous < 0:
@@ -677,7 +677,7 @@ def compute_monotonicity_extremes(node, positive):
 
     extremes = set()
 
-    for regulator_state in node.regulatory_states:
+    for regulator_state in node.regulator_states:
         extreme = True
         for a in activators:
             if (not positive and regulator_state.substates[a.id]) or (positive and regulator_state.superstates[a.id]):
@@ -754,7 +754,7 @@ def possible_extension(unfolding, condition, queue):
         if not prefab_presets:
             continue
 
-        for regulator_state in node.regulatory_states:
+        for regulator_state in node.regulator_states:
             possible_presets = list(prefab_presets)
             for i in range(0,len(unfolding.graph.nodes)):
                 if (node.regulators & (1 << i)) and node_cosets[i]:
