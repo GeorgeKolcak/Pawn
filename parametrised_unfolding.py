@@ -1,8 +1,10 @@
+import automata_network
 import numpy
-import time
+import pypint
+
 
 verbose = False
-target = 0
+goal = None
 report_frequency = 4096
 
 
@@ -85,6 +87,10 @@ class Unfolding:
             backhand_cutoffs = table_entry.add_context(event.parameter_context.bounds(), event)
             for bc in backhand_cutoffs:
                 self.remove_suffix(bc, pe_queue)
+
+            if goal is not None:
+                model = automata_network.ConfigurationWrapperModel(self.graph, event)
+                reduced = model.reduce_for_goal(str(goal))
 
         if verbose:
             print('Adding ' + str(event))
@@ -828,8 +834,8 @@ def enqueue_event(unfolding, queue, event):
     event.init_from_preset(unfolding.initial_marking, unfolding.initial_context)
     table_entry = unfolding.get_table_entry(event.marking)
     if table_entry.is_possible(event):
-        if target:
-            event.goal = (event.marking == target)
+        if goal:
+            event.goal = goal.matches(event.marking)
         table_entry.add_event(event)
 
         event.id = len(unfolding.events) + len(unfolding.discarded_events) + len(queue)

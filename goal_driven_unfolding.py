@@ -34,3 +34,9 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
         super().limit_max(context, value)
 
         self.soft_limit.limit_max(context, value)
+
+    def soft_limit_min(self, context, value):
+        self.soft_limit.limit_min(self, context.id, value)
+
+    def soft_limit_max(self, context, value):
+        self.soft_limit.limit_max(self, context.id, value)

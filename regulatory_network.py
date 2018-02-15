@@ -83,6 +83,25 @@ class RegulatoryState:
         return '{' + string + '}'
 
 
+class PartialState:
+    def __init__(self, graph):
+        self.graph = graph
+        self.mask = numpy.array([False] * len(graph.nodes))
+        self.values = numpy.array([0] * len(graph.nodes))
+
+    def matches(self, marking):
+        return ((marking == self.values) | numpy.invert(self.mask)).all()
+
+    def __str__(self):
+        string = ""
+
+        for node in self.graph.nodes:
+            if self.mask[node.id]:
+                string += ",{0}={1}".format(node.name, self.values[node.id])
+
+        return string[1:]
+
+
 class RegulatoryGraph:
     def __init__(self):
         self.parametrisation_size = 0
@@ -112,19 +131,6 @@ class RegulatoryGraph:
         for n in self.nodes:
             if n.name == node:
                 return n
-
-    def build_marking(self, marking_string):
-        marking = [0] * len(self.nodes)
-        if common.is_number(marking_string):
-            for i in range(0, len(self.nodes)):
-                marking[i] = int(marking_string[i])
-        else:
-            nds = marking_string.split(",")
-            for i in range(0, len(nds)):
-                val = nds[i].split("=")
-                node = self.get_node(val[0].strip())
-                marking[node.id] = int(val[1])
-        return marking
 
 
 def parse_regulatory_graph(filename):

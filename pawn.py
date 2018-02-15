@@ -3,10 +3,11 @@ import time
 import regulatory_network
 import parametrised_unfolding
 
+
 input_file_name = ""
 output_file_name = ""
 
-target = 0
+goal = None
 
 timed = False
 exec_time = 0
@@ -27,7 +28,7 @@ while i < len(sys.argv):
                 if i == (len(sys.argv) - 1):
                     print("The -g modifier is expected to be followed by a marking.")
                     exit(2)
-                target = sys.argv[i + 1]
+                goal = sys.argv[i + 1]
                 i += 1
             elif c == 'r':
                 if i == (len(sys.argv) - 1):
@@ -54,11 +55,19 @@ if timed:
 
 graph = regulatory_network.parse_regulatory_graph(input_file_name)
 
-if target:
-    parametrised_unfolding.target = graph.build_marking(target)
-    if not parametrised_unfolding.target:
-        print('The specified marking "' + target + '" does not match the system definition. Usage: Pawn <input file> [<output file>,-v,-g <target node>]')
-        exit(2)
+if goal is not None:
+    parametrised_unfolding.goal = regulatory_network.PartialState(graph)
+
+    for specification in goal.split(','):
+        values = specification.split('=')
+
+        node = graph.get_node(values[0].strip())
+        if node is None:
+            print("The specified goal \"{0}\" does not match the system definition. Unknown component '{1}'.".format(goal, values[0].trim()))
+            exit(2)
+
+        parametrised_unfolding.goal.mask[node.id] = True
+        parametrised_unfolding.goal.values[node.id] = int(values[1])
 
 unfolding = parametrised_unfolding.unfold(graph)
 
