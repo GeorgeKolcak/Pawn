@@ -1,6 +1,5 @@
 import automata_network
 import numpy
-import pypint
 
 
 verbose = False
@@ -84,13 +83,15 @@ class Unfolding:
         table_entry = self.get_table_entry(event.marking)
         event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
         if not event.cutoff:
-            backhand_cutoffs = table_entry.add_context(event.parameter_context.bounds(), event)
-            for bc in backhand_cutoffs:
-                self.remove_suffix(bc, pe_queue)
+            table_entry.add_context(event.parameter_context)
+            backwards_cutoffs = table_entry.obtain_backwards_cutoffs(event)
+            for backwards_cutoff in backwards_cutoffs:
+                self.remove_suffix(backwards_cutoff, pe_queue)
 
-            if goal is not None:
+            if goal is not None and not event.goal:
                 model = automata_network.ConfigurationWrapperModel(self.graph, event)
                 reduced = model.reduce_for_goal(str(goal))
+                automata_network.restrict_context_to_model(event, reduced)
 
         if verbose:
             print('Adding ' + str(event))
@@ -288,23 +289,23 @@ class MarkingTableEntry:
     def add_event(self, event):
         self.events.add(event)
 
-    def add_context(self, lattice, event=None):
-        dimension = lattice.dimension()
+    def add_context(self, context):
+        dimension = context.lattice.dimension()
         found = False
         i = 0
         while i < len(self.lattices):
             existing_dimension = self.lattices[i].dimension()
             if existing_dimension > dimension:
-                if lattice.issubset(self.lattices[i]):
+                if context.lattice.issubset(self.lattices[i]):
                     found = True
                     break
             elif existing_dimension == dimension:
-                distance = self.lattices[i].distance(lattice)
+                distance = self.lattices[i].distance(context.lattice)
                 if not distance:
                     found = True
                     break
                 elif distance == 1:
-                    union = self.lattices[i].union(lattice)
+                    union = self.lattices[i].union(context.lattice)
                     self.lattices.remove(self.lattices[i])
                     self.add_context(union)
                     found = True
@@ -312,26 +313,28 @@ class MarkingTableEntry:
             elif existing_dimension < dimension:
                 if not found:
                     found = True
-                    self.lattices.insert(i, lattice)
+                    self.lattices.insert(i, context.lattice)
                     i += 1
-                if self.lattices[i].issubset(lattice):
+                if self.lattices[i].issubset(context.lattice):
                     self.lattices.remove(self.lattices[i])
                     i -= 1
             i += 1
 
         if not found:
-            self.lattices.append(lattice)
+            self.lattices.append(context.lattice)
 
+    def obtain_backwards_cutoffs(self, event):
         backwards_cutoffs = set()
         for existing_event in self.events:
-            if (not existing_event.cutoff) and (existing_event != event) and existing_event.parameter_context.bounds().issubset(lattice):
+            if (not existing_event.cutoff) and (existing_event != event) and \
+                    existing_event.parameter_context.lattice.issubset(event.parameter_context.lattice):
                 existing_event.cutoff = True
                 backwards_cutoffs.add(existing_event)
         return backwards_cutoffs
 
     def is_cutoff(self, event):
         for lattice in self.lattices:
-            if event.parameter_context.bounds().issubset(lattice):
+            if event.parameter_context.lattice.issubset(lattice):
                 return True
 
         return False
@@ -455,6 +458,7 @@ class ParameterContext:
         if graph is not None:
             self.graph = graph
             self.lattice = Lattice.full_context(graph)
+            self.soft_limit = self.lattice.copy()
             for node in graph.nodes:
                 self.open_infima[node] = compute_monotonicity_extremes(node, False)
                 self.open_suprema[node] = compute_monotonicity_extremes(node, True)
@@ -470,20 +474,24 @@ class ParameterContext:
     def empty(self):
         return (not self.lattice) or self.lattice.empty()
 
-    def bounds(self):
-        return self.lattice
+    def soft_empty(self):
+        return (not self.soft_limit) or self.soft_limit.empty()
 
     def copy(self):
         copy = ParameterContext()
+        self._populate_copy(copy)
+
+        return copy
+
+    def _populate_copy(self, copy):
         copy.graph = self.graph
         copy.lattice = self.lattice.copy()
+        copy.soft_limit = self.soft_limit.copy()
         for node in self.open_infima:
             copy.open_infima[node] = set(self.open_infima[node])
         for node in self.open_suprema:
             copy.open_suprema[node] = set(self.open_suprema[node])
         copy.observable_edges = set(self.observable_edges)
-
-        return copy
 
     def limit(self, regulator_state, value):
         if self.lattice.limit(regulator_state.id, value):
@@ -505,6 +513,8 @@ class ParameterContext:
         for i in range(0, len(changed_indices)):
             if changed_indices[i]:
                 self.check_edge_labels(self.graph.regulator_states[i])
+
+        self.soft_limit = self.soft_limit.intersect(pc.lattice)
 
     def union(self, context):
         union = self.copy()
@@ -846,12 +856,12 @@ def enqueue_event(unfolding, queue, event):
 
 
 def init_unfolding(graph, initial_marking=None, initial_context=None):
-    if not initial_marking:
+    if initial_marking is None:
         initial_marking = []
         for node in graph.nodes:
             initial_marking.append(node.initial)
 
-    if not initial_context:
+    if initial_context is None:
         initial_context = ParameterContext(graph)
 
     unfolding = Unfolding(graph, initial_marking, initial_context)

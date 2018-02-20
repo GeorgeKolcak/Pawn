@@ -166,10 +166,10 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
 
                 for regulator_state in node.regulator_states:
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1)\
-                            and event.parameter_context.lattice.min[regulator_state.id] < i + 1:
+                            and event.parameter_context.soft_limit.min[regulator_state.id] < i + 1:
                         inhibitions.add_regulator_state(regulator_state)
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i)\
-                            and event.parameter_context.lattice.max[regulator_state.id] > i:
+                            and event.parameter_context.soft_limit.max[regulator_state.id] > i:
                         activations.add_regulator_state(regulator_state)
 
                 inhibition_string = "{0} -> {1}".format(i + 1, i)
@@ -215,3 +215,99 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
     def populate_popen_args(self, args, kwargs): #workaround until pypint is fixed
         kwargs["input"] = self.data
         super(pypint.InMemoryModel, self).populate_popen_args(args, kwargs)
+
+
+class Transition:
+    def __init__(self, regulator_state, regulator_mask):
+        self.regulator_state = regulator_state
+        self.regulator_mask = regulator_mask
+
+    def __contains__(self, regulator_state):
+        mask = self.regulator_mask & regulator_state.target.regulators
+        for i in range(0, len(self.regulator_state)):
+            if mask & (1 << i) and self.regulator_state[i] != regulator_state.regulators[i]:
+                return False
+
+        return True
+
+
+class TransitionCollection:
+    def __init__(self, graph):
+        self.graph = graph
+        self.transitions = []
+
+    def add_transition(self, an_transition):
+        regulator_mask = 0
+        regulator_state = [0] * len(self.graph.nodes)
+        for origin in an_transition.origins:
+            regulator = self.graph.get_node(origin[0])
+            regulator_mask += (1 << regulator.id)
+            regulator_state[regulator.id] = origin[1]
+
+            regulator_mask &= self.graph.get_node(an_transition.a).regulators
+
+        self.transitions.append(Transition(regulator_state, regulator_mask))
+
+    def __contains__(self, regulator_state):
+        for transition in self.transitions:
+            if regulator_state in transition:
+                return True
+
+        return False
+
+
+def restrict_context_to_model(event, model):
+    activations = [None] * len(event.parameter_context.graph.nodes)
+    inhibitions = [None] * len(event.parameter_context.graph.nodes)
+
+    for node in event.parameter_context.graph.nodes:
+        activations[node.id] = [None] * node.maximum
+        inhibitions[node.id] = [None] * node.maximum
+
+        for i in range(0, node.maximum):
+            activations[node.id][i] = TransitionCollection(event.parameter_context.graph)
+            inhibitions[node.id][i] = TransitionCollection(event.parameter_context.graph)
+
+    for transition in model.local_transitions:
+        target = event.parameter_context.graph.get_node(transition.a)
+
+        if transition.i < transition.j:
+            activations[target.id][transition.i].add_transition(transition)
+        else:
+            inhibitions[target.id][transition.j].add_transition(transition)
+
+    for node in event.parameter_context.graph.nodes:
+        for regulator_state in node.regulator_states:
+            induced_maximum = None
+            induced_minimum = None
+
+            for i in range(0, node.maximum):
+                if regulator_state in activations[node.id][i]:
+                    if induced_maximum is None:
+                        induced_maximum = i + 1
+                    else:
+                        induced_maximum = max(induced_maximum, i + 1)
+
+                if regulator_state in inhibitions[node.id][i]:
+                    if induced_minimum is None:
+                        induced_minimum = i
+                    else:
+                        induced_minimum = min(induced_minimum, i)
+
+            if induced_maximum is None:
+                if induced_minimum is None:
+                    event.parameter_context.soft_limit.max[regulator_state.id] = event.marking[regulator_state.target.id]
+                    event.parameter_context.soft_limit.min[regulator_state.id] = event.marking[regulator_state.target.id]
+                else:
+                    event.parameter_context.soft_limit.max[regulator_state.id] = induced_minimum
+                    event.parameter_context.soft_limit.min[regulator_state.id] = induced_minimum
+            else:
+                event.parameter_context.soft_limit.max[regulator_state.id] = induced_maximum
+
+            if induced_minimum is None:
+                if induced_maximum is not None:
+                    event.parameter_context.soft_limit.max[regulator_state.id] = induced_maximum
+                    event.parameter_context.soft_limit.min[regulator_state.id] = induced_maximum
+            else:
+                event.parameter_context.soft_limit.min[regulator_state.id] = induced_minimum
+
