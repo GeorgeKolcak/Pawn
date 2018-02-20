@@ -4,7 +4,6 @@ import numpy
 
 verbose = False
 goal = None
-report_frequency = 4096
 
 
 class PossibleExtensionQueue:
@@ -50,48 +49,20 @@ class PossibleExtensionQueue:
 
 
 class Unfolding:
-    def __init__(self, graph, initial_marking, initial_context):
+    def __init__(self, initial_marking, initial_context):
         self.conditions = []
         self.events = []
         self.discarded_events = []
         self.initial_marking = list(initial_marking)
         self.initial_context = initial_context.copy()
-        self.marking_table = [None]
-        self.graph = graph
-        for node in graph.nodes:
-            for i in range(0,((node.maximum // 2) + 1)):
-                self.marking_table += self.marking_table
 
-    def get_table_entry(self, marking):
-        index = 0
-        for node in self.graph.nodes:
-            index *= (2 ** ((node.maximum // 2) + 1))
-            index += marking[node.id]
-
-        if not self.marking_table[index]:
-            self.marking_table[index] = MarkingTableEntry()
-
-        return self.marking_table[index]
-
-    def add_event(self, pe_queue, add_extensions = True):
-        if len(pe_queue) <= 0:
-            return
-
-        event = pe_queue.pop()
+    def add_event(self, event):
         self.events.append(event)
 
-        table_entry = self.get_table_entry(event.marking)
-        event.cutoff |= (event.marking == self.initial_marking) or table_entry.is_cutoff(event)
-        if not event.cutoff:
-            table_entry.add_context(event.parameter_context)
-            backwards_cutoffs = table_entry.obtain_backwards_cutoffs(event)
-            for backwards_cutoff in backwards_cutoffs:
-                self.remove_suffix(backwards_cutoff, pe_queue)
-
-            if goal is not None and not event.goal:
-                model = automata_network.ConfigurationWrapperModel(self.graph, event)
-                reduced = model.reduce_for_goal(str(goal))
-                automata_network.restrict_context_to_model(event, reduced)
+#            if goal is not None and not event.goal:
+#                model = automata_network.ConfigurationWrapperModel(self.graph, event)
+#                reduced = model.reduce_for_goal(str(goal))
+#                automata_network.restrict_context_to_model(event, reduced)
 
         if verbose:
             print('Adding ' + str(event))
@@ -123,11 +94,6 @@ class Unfolding:
 
             for concurrent_condition in new_condition.coset:
                 concurrent_condition.coset.add(new_condition)
-
-            if add_extensions:
-                possible_extension(self, new_condition, pe_queue)
-
-        return event
 
     def remove_suffix(self, event, queue):
         for condition in event.poset:
@@ -679,6 +645,226 @@ class ParameterContext:
                 self.limit_min(supremum, self.lattice.min[supremum.id] + 1)
 
 
+class Unfolder():
+    def __init__(self, graph, initial_marking=None, initial_context=None, report_interval=4096):
+        self.graph = graph
+        self.report_interval = report_interval
+
+        if initial_marking is None:
+            initial_marking = self.build_initial_marking()
+
+        if initial_context is None:
+            initial_context = self.build_initial_context()
+
+        self.prefix = Unfolding(initial_marking, initial_context)
+
+        for node in self.graph.nodes:
+            initial_condition = Condition()
+            initial_condition.id = len(self.prefix.conditions)
+            initial_condition.node = node
+            initial_condition.value = initial_marking[node.id]
+            for condition in self.prefix.conditions:
+                condition.coset.add(initial_condition)
+                initial_condition.coset.add(condition)
+            self.prefix.conditions.append(initial_condition)
+
+        self.possible_extensions = PossibleExtensionQueue()
+        self.marking_table = [None]
+
+        for node in self.graph.nodes:
+            for i in range(0,((node.maximum // 2) + 1)):
+                self.marking_table += self.marking_table
+
+    def build_initial_marking(self):
+        initial_marking = []
+        for node in self.graph.nodes:
+            initial_marking.append(node.initial)
+
+        return initial_marking
+
+    def build_initial_context(self):
+        return ParameterContext(self.graph)
+
+    def get_marking_table_entry(self, marking):
+        index = 0
+        for node in self.graph.nodes:
+            index *= (2 ** ((node.maximum // 2) + 1))
+            index += marking[node.id]
+
+        if not self.marking_table[index]:
+            self.marking_table[index] = MarkingTableEntry()
+
+        return self.marking_table[index]
+
+    def unfold(self):
+        self._compute_possible_extensions(self.prefix.conditions[0])
+
+        event = self.possible_extensions.pop()
+
+        while event:
+            self._add_event(event)
+            if not (len(self.prefix.events) % self.report_interval):
+                print('Event count: ' + str(len(self.prefix.events)))
+                print('Event queue: ' + str(len(self.possible_extensions)))
+
+            event = self.possible_extensions.pop()
+
+    @staticmethod
+    def _compute_condition_cosets_for_nodes(condition, node_cosets):
+        coset_nodes = 0
+        for concurrent_condition in condition.coset:
+            if node_cosets[concurrent_condition.node.id] is None:
+                node_cosets[concurrent_condition.node.id] = []
+            node_cosets[concurrent_condition.node.id].append(concurrent_condition)
+            if not (coset_nodes & (1 << concurrent_condition.node.id)):
+                coset_nodes += (1 << concurrent_condition.node.id)
+
+        return coset_nodes
+
+    @staticmethod
+    def _compute_prefab_extension_presets(node, node_cosets):
+        prefab_presets = []
+        if node.regulators & (1 << node.id):
+            prefab_presets.append(set())
+        else:
+            for concurrent_condition in node_cosets[node.id]:
+                prefab_preset = set()
+                prefab_preset.add(concurrent_condition)
+                prefab_presets.append(prefab_preset)
+
+        return prefab_presets
+
+    def _compute_possible_extension_presets(self, regulator_state, node, node_cosets, prefab_presets):
+        possible_presets = list(prefab_presets)
+
+        for i in range(0, len(self.graph.nodes)):
+            if (node.regulators & (1 << i)) and node_cosets[i]:
+                new_possible_presets = []
+
+                for concurrent_condition in node_cosets[i]:
+                    if regulator_state.edges[i].threshold:
+                        if ((regulator_state.regulators[i] == 0) and
+                            (concurrent_condition.value < regulator_state.edges[i].threshold)) or \
+                                ((regulator_state.regulators[i] == self.graph.nodes[i].maximum) and
+                                 (concurrent_condition.value >= regulator_state.edges[i].threshold)):
+                            for possible_preset in possible_presets:
+                                if possible_preset.issubset(concurrent_condition.coset):
+                                    npp = set(possible_preset)
+                                    npp.add(concurrent_condition)
+                                    new_possible_presets.append(npp)
+                    else:
+                        if regulator_state.regulators[i] == concurrent_condition.value:
+                            for possible_preset in possible_presets:
+                                if possible_preset.issubset(concurrent_condition.coset):
+                                    npp = set(possible_preset)
+                                    npp.add(concurrent_condition)
+                                    new_possible_presets.append(npp)
+
+                if not new_possible_presets:
+                    break
+                else:
+                    possible_presets = new_possible_presets
+
+        return possible_presets
+
+    @staticmethod
+    def _validate_extension_preset(node, possible_preset):
+        preset_hash = 0
+        for concurrent_condition in possible_preset:
+            preset_hash += (1 << concurrent_condition.node.id)
+
+        regulator_hash = node.regulators
+        if not node.regulators & (1 << node.id):
+            regulator_hash += (1 << node.id)
+
+        return preset_hash == regulator_hash
+
+    @staticmethod
+    def _get_target_condition(node, possible_preset):
+        for concurrent_condition in possible_preset:
+            if concurrent_condition.node == node:
+                return concurrent_condition
+
+        return None
+
+    def _compute_possible_extensions_for_node(self, node, node_cosets):
+        prefab_presets = Unfolder._compute_prefab_extension_presets(node, node_cosets)
+        if not prefab_presets:
+            return
+
+        for regulator_state in node.regulator_states:
+            possible_presets = self._compute_possible_extension_presets(regulator_state, node, node_cosets, prefab_presets)
+
+            for possible_preset in possible_presets:
+                if not Unfolder._validate_extension_preset(node, possible_preset):
+                    continue
+
+                target_condition = Unfolder._get_target_condition(node, possible_preset)
+                if target_condition is None:
+                    continue
+
+                if target_condition.value > 0:
+                    inhibition_event = Event()
+                    inhibition_event.target = node
+                    inhibition_event.target_value = (target_condition.value - 1)
+                    inhibition_event.nature = -1
+                    inhibition_event.regulator_state = regulator_state
+                    inhibition_event.preset = possible_preset
+                    self._enqueue_event(inhibition_event)
+                if target_condition.value < node.maximum:
+                    activation_event = Event()
+                    activation_event.target = node
+                    activation_event.target_value = (target_condition.value + 1)
+                    activation_event.nature = 1
+                    activation_event.regulator_state = regulator_state
+                    activation_event.preset = possible_preset
+                    self._enqueue_event(activation_event)
+
+    def _compute_possible_extensions(self, condition):
+        node_cosets = [None] * len(self.graph.nodes)
+        coset_nodes = Unfolder._compute_condition_cosets_for_nodes(condition, node_cosets)
+
+        for node in self.graph.nodes:
+            if ((node.regulators ^ coset_nodes) & node.regulators) or (not node_cosets[node.id]):
+                continue
+
+            self._compute_possible_extensions_for_node(node, node_cosets)
+
+    def _enqueue_event(self, event):
+        event.init_from_preset(self.prefix.initial_marking, self.prefix.initial_context)
+
+        table_entry = self.get_marking_table_entry(event.marking)
+        if table_entry.is_possible(event):
+            table_entry.add_event(event)
+
+            event.id = len(self.prefix.events) + len(self.prefix.discarded_events) + len(self.possible_extensions)
+            for condition in event.preset:
+                condition.poset.add(event)
+
+            self.possible_extensions.push(event)
+
+    def _backwards_cutoff(self, event):
+        self.prefix.remove_suffix(event, self.possible_extensions)
+
+    def _add_event(self, event):
+        if event is None:
+            return
+
+        table_entry = self.get_marking_table_entry(event.marking)
+        event.cutoff |= (event.marking == self.prefix.initial_marking) or table_entry.is_cutoff(event)
+
+        self.prefix.add_event(event)
+
+        if not event.cutoff:
+            table_entry.add_context(event.parameter_context)
+            backwards_cutoffs = table_entry.obtain_backwards_cutoffs(event)
+            for backwards_cutoff in backwards_cutoffs:
+                self._backwards_cutoff(backwards_cutoff)
+
+            for condition in event.poset:
+                self._compute_possible_extensions(condition)
+
+
 def compute_monotonicity_extremes(node, positive):
     if not node.regulator_states:
         return set()
@@ -745,154 +931,3 @@ def foata_compare(foata1, foata2):
             return result
 
     return len(foata1) - len(foata2)
-
-
-def possible_extension(unfolding, condition, queue):
-    coset_nodes = 0
-    node_cosets = [None] * len(unfolding.graph.nodes)
-    for concurrent_condition in condition.coset:
-        if not node_cosets[concurrent_condition.node.id]:
-            node_cosets[concurrent_condition.node.id] = []
-        node_cosets[concurrent_condition.node.id].append(concurrent_condition)
-        if not (coset_nodes & (1 << concurrent_condition.node.id)):
-            coset_nodes += (1 << concurrent_condition.node.id)
-
-    for node in unfolding.graph.nodes:
-        if ((node.regulators ^ coset_nodes) & node.regulators) or (not node_cosets[node.id]):
-            continue
-
-        prefab_presets = []
-        if node.regulators & (1 << node.id):
-            prefab_presets.append(set())
-        else:
-            for concurrent_condition in node_cosets[node.id]:
-                prefab_preset = set()
-                prefab_preset.add(concurrent_condition)
-                prefab_presets.append(prefab_preset)
-
-        if not prefab_presets:
-            continue
-
-        for regulator_state in node.regulator_states:
-            possible_presets = list(prefab_presets)
-            for i in range(0,len(unfolding.graph.nodes)):
-                if (node.regulators & (1 << i)) and node_cosets[i]:
-                    new_possible_presets = []
-                    for concurrent_condition in node_cosets[i]:
-                        if regulator_state.edges[i].threshold:
-                            if ((regulator_state.regulators[i] == 0) and
-                                        (concurrent_condition.value < regulator_state.edges[i].threshold)) or\
-                                    ((regulator_state.regulators[i] == unfolding.graph.nodes[i].maximum) and
-                                         (concurrent_condition.value >= regulator_state.edges[i].threshold)):
-                                for possible_preset in possible_presets:
-                                    if possible_preset.issubset(concurrent_condition.coset):
-                                        npp = set(possible_preset)
-                                        npp.add(concurrent_condition)
-                                        new_possible_presets.append(npp)
-                        else:
-                            if regulator_state.regulators[i] == concurrent_condition.value:
-                                for possible_preset in possible_presets:
-                                    if possible_preset.issubset(concurrent_condition.coset):
-                                        npp = set(possible_preset)
-                                        npp.add(concurrent_condition)
-                                        new_possible_presets.append(npp)
-                    if not new_possible_presets:
-                        break
-                    else:
-                        possible_presets = new_possible_presets
-
-            for possible_preset in possible_presets:
-                preset_hash = 0
-                for concurrent_condition in possible_preset:
-                    preset_hash += (1 << concurrent_condition.node.id)
-
-                if node.regulators & (1 << node.id):
-                    if preset_hash != node.regulators:
-                        continue
-                else:
-                    if preset_hash != (node.regulators + (1 << node.id)):
-                        continue
-
-                target_condition = None
-                for concurrent_condition in possible_preset:
-                    if concurrent_condition.node == node:
-                        target_condition = concurrent_condition
-                        break
-
-                if not target_condition:
-                    continue
-
-                if target_condition.value > 0:
-                    inhibit_event = Event()
-                    inhibit_event.target = node
-                    inhibit_event.target_value = (target_condition.value - 1)
-                    inhibit_event.nature = -1
-                    inhibit_event.regulator_state = regulator_state
-                    inhibit_event.preset = possible_preset
-                    enqueue_event(unfolding, queue, inhibit_event)
-                if target_condition.value < node.maximum:
-                    activ_event = Event()
-                    activ_event.target = node
-                    activ_event.target_value = (target_condition.value + 1)
-                    activ_event.nature = 1
-                    activ_event.regulator_state = regulator_state
-                    activ_event.preset = possible_preset
-                    enqueue_event(unfolding, queue, activ_event)
-
-
-def enqueue_event(unfolding, queue, event):
-    event.init_from_preset(unfolding.initial_marking, unfolding.initial_context)
-    table_entry = unfolding.get_table_entry(event.marking)
-    if table_entry.is_possible(event):
-        if goal:
-            event.goal = goal.matches(event.marking)
-        table_entry.add_event(event)
-
-        event.id = len(unfolding.events) + len(unfolding.discarded_events) + len(queue)
-        for condition in event.preset:
-            condition.poset.add(event)
-
-        queue.push(event)
-
-
-def init_unfolding(graph, initial_marking=None, initial_context=None):
-    if initial_marking is None:
-        initial_marking = []
-        for node in graph.nodes:
-            initial_marking.append(node.initial)
-
-    if initial_context is None:
-        initial_context = ParameterContext(graph)
-
-    unfolding = Unfolding(graph, initial_marking, initial_context)
-
-    for node in graph.nodes:
-        initial_condition = Condition()
-        initial_condition.id = len(unfolding.conditions)
-        initial_condition.node = node
-        initial_condition.value = initial_marking[node.id]
-        for condition in unfolding.conditions:
-            condition.coset.add(initial_condition)
-            initial_condition.coset.add(condition)
-        unfolding.conditions.append(initial_condition)
-
-    return unfolding
-
-
-def unfold(graph):
-    unfolding = init_unfolding(graph)
-
-    pe_queue = PossibleExtensionQueue()
-
-    possible_extension(unfolding, unfolding.conditions[0], pe_queue)
-
-    event = unfolding.add_event(pe_queue)
-
-    while event:
-        if not (len(unfolding.events) % report_frequency):
-            print('Event count: ' + str(len(unfolding.events)))
-            print('Event queue: ' + str(len(pe_queue)))
-
-        event = unfolding.add_event(pe_queue)
-
-    return unfolding

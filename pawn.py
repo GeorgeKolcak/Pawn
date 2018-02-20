@@ -11,6 +11,7 @@ goal = None
 
 timed = False
 exec_time = 0
+report_interval = None
 
 args = []
 i = 1
@@ -34,7 +35,7 @@ while i < len(sys.argv):
                 if i == (len(sys.argv) - 1):
                     print("The -r modifier is expected to be followed by a number.")
                     exit(2)
-                parametrised_unfolding.report_frequency = int(sys.argv[i + 1])
+                report_interval = int(sys.argv[i + 1])
                 i += 1
     else:
         args.append(sys.argv[i])
@@ -69,7 +70,13 @@ if goal is not None:
         parametrised_unfolding.goal.mask[node.id] = True
         parametrised_unfolding.goal.values[node.id] = int(values[1])
 
-unfolding = parametrised_unfolding.unfold(graph)
+if report_interval is None:
+    unfolder = parametrised_unfolding.Unfolder(graph)
+else:
+    unfolder = parametrised_unfolding.Unfolder(graph, report_interval=report_interval)
+
+unfolder.unfold()
+unfolding = unfolder.prefix
 
 output = open(output_file_name, 'w')
 
