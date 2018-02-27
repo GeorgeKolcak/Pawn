@@ -1,9 +1,7 @@
-import automata_network
 import numpy
 
 
 verbose = False
-goal = None
 
 
 class PossibleExtensionQueue:
@@ -58,11 +56,6 @@ class Unfolding:
 
     def add_event(self, event):
         self.events.append(event)
-
-#            if goal is not None and not event.goal:
-#                model = automata_network.ConfigurationWrapperModel(self.graph, event)
-#                reduced = model.reduce_for_goal(str(goal))
-#                automata_network.restrict_context_to_model(event, reduced)
 
         if verbose:
             print('Adding ' + str(event))
@@ -247,10 +240,42 @@ class Event:
         return '{' + preset_string + '}->' + self.target.name + str(self.target_value)
 
 
+class ParameterContextCollection():
+    def __init__(self):
+        self.contexts = []
+
+    def __len__(self):
+        return len(self.contexts)
+
+    def __contains__(self, context):
+        for existing_context in self.contexts:
+            if context.issubset(existing_context):
+                return True
+
+        return False
+
+    def add(self, context):
+        for i in range(0, len(self.contexts)):
+            if context.issubset(self.contexts[i]):
+                return
+
+            if self.contexts[i].issubset(context):
+                self.contexts.remove(self.contexts[i])
+                i -= 1
+
+        self.contexts.append(context)
+
+    def insert(self, index, context):
+        self.contexts.insert(index, context)
+
+    def remove(self, context):
+        self.contexts.remove(context)
+
+
 class MarkingTableEntry:
     def __init__(self):
         self.events = set()
-        self.lattices = []
+        self.context_collection = ParameterContextCollection()
 
     def add_event(self, event):
         self.events.add(event)
@@ -259,56 +284,52 @@ class MarkingTableEntry:
         dimension = context.lattice.dimension()
         found = False
         i = 0
-        while i < len(self.lattices):
-            existing_dimension = self.lattices[i].dimension()
+        while i < len(self.context_collection):
+            existing_dimension = self.context_collection.contexts[i].lattice.dimension()
             if existing_dimension > dimension:
-                if context.lattice.issubset(self.lattices[i]):
+                if context.issubset(self.context_collection.contexts[i]):
                     found = True
                     break
             elif existing_dimension == dimension:
-                distance = self.lattices[i].distance(context.lattice)
+                distance = self.context_collection.contexts[i].lattice.distance(context.lattice)
                 if not distance:
                     found = True
                     break
                 elif distance == 1:
-                    union = self.lattices[i].union(context.lattice)
-                    self.lattices.remove(self.lattices[i])
+                    union = self.context_collection.contexts[i].union(context)
+                    self.context_collection.remove(self.context_collection.contexts[i])
                     self.add_context(union)
                     found = True
                     break
             elif existing_dimension < dimension:
                 if not found:
                     found = True
-                    self.lattices.insert(i, context.lattice)
+                    self.context_collection.insert(i, context)
                     i += 1
-                if self.lattices[i].issubset(context.lattice):
-                    self.lattices.remove(self.lattices[i])
+                if self.context_collection.contexts[i].issubset(context):
+                    self.context_collection.remove(self.context_collection.contexts[i])
                     i -= 1
             i += 1
 
         if not found:
-            self.lattices.append(context.lattice)
+            self.context_collection.add(context)
 
     def obtain_backwards_cutoffs(self, event):
         backwards_cutoffs = set()
         for existing_event in self.events:
             if (not existing_event.cutoff) and (existing_event != event) and \
-                    existing_event.parameter_context.lattice.issubset(event.parameter_context.lattice):
+                    existing_event.parameter_context.issubset(event.parameter_context):
                 existing_event.cutoff = True
                 backwards_cutoffs.add(existing_event)
         return backwards_cutoffs
 
     def is_cutoff(self, event):
-        for lattice in self.lattices:
-            if event.parameter_context.lattice.issubset(lattice):
-                return True
-
-        return False
+        return event.parameter_context in self.context_collection
 
     def is_possible(self, event):
         if event.parameter_context.empty():
             if verbose:
-                print(str(event) + ' not possible, empty parameter context')
+                print("{0} not possible, empty parameter context.".format(event))
             return False
 
         for existing_event in self.events:
@@ -320,7 +341,7 @@ class MarkingTableEntry:
                         break
                 if not different:
                     if verbose:
-                        print(str(event) + ' not possible, already exists')
+                        print("{0} not possible, already exists".format(event))
                     return False
         return True
 
@@ -424,7 +445,6 @@ class ParameterContext:
         if graph is not None:
             self.graph = graph
             self.lattice = Lattice.full_context(graph)
-            self.soft_limit = self.lattice.copy()
             for node in graph.nodes:
                 self.open_infima[node] = compute_monotonicity_extremes(node, False)
                 self.open_suprema[node] = compute_monotonicity_extremes(node, True)
@@ -440,9 +460,6 @@ class ParameterContext:
     def empty(self):
         return (not self.lattice) or self.lattice.empty()
 
-    def soft_empty(self):
-        return (not self.soft_limit) or self.soft_limit.empty()
-
     def copy(self):
         copy = ParameterContext()
         self._populate_copy(copy)
@@ -452,12 +469,14 @@ class ParameterContext:
     def _populate_copy(self, copy):
         copy.graph = self.graph
         copy.lattice = self.lattice.copy()
-        copy.soft_limit = self.soft_limit.copy()
         for node in self.open_infima:
             copy.open_infima[node] = set(self.open_infima[node])
         for node in self.open_suprema:
             copy.open_suprema[node] = set(self.open_suprema[node])
         copy.observable_edges = set(self.observable_edges)
+
+    def issubset(self, context):
+        return self.lattice.issubset(context.lattice)
 
     def limit(self, regulator_state, value):
         if self.lattice.limit(regulator_state.id, value):
@@ -471,16 +490,14 @@ class ParameterContext:
         if self.lattice.limit_max(regulator_state.id, value):
             self.check_edge_labels(regulator_state)
 
-    def intersect(self, pc):
-        changed_indices = (self.lattice.min ^ pc.lattice.min) | (self.lattice.max ^ pc.lattice.max)
+    def intersect(self, context):
+        changed_indices = (self.lattice.min ^ context.lattice.min) | (self.lattice.max ^ context.lattice.max)
 
-        self.lattice = self.lattice.intersect(pc.lattice)
+        self.lattice = self.lattice.intersect(context.lattice)
 
         for i in range(0, len(changed_indices)):
             if changed_indices[i]:
                 self.check_edge_labels(self.graph.regulator_states[i])
-
-        self.soft_limit = self.soft_limit.intersect(pc.lattice)
 
     def union(self, context):
         union = self.copy()
@@ -646,15 +663,15 @@ class ParameterContext:
 
 
 class Unfolder():
-    def __init__(self, graph, initial_marking=None, initial_context=None, report_interval=4096):
+    def __init__(self, report_interval, graph, initial_marking=None, initial_context=None):
         self.graph = graph
         self.report_interval = report_interval
 
         if initial_marking is None:
-            initial_marking = self.build_initial_marking()
+            initial_marking = self._build_initial_marking()
 
         if initial_context is None:
-            initial_context = self.build_initial_context()
+            initial_context = self._build_initial_context()
 
         self.prefix = Unfolding(initial_marking, initial_context)
 
@@ -675,24 +692,27 @@ class Unfolder():
             for i in range(0,((node.maximum // 2) + 1)):
                 self.marking_table += self.marking_table
 
-    def build_initial_marking(self):
+    def _build_initial_marking(self):
         initial_marking = []
         for node in self.graph.nodes:
             initial_marking.append(node.initial)
 
         return initial_marking
 
-    def build_initial_context(self):
+    def _build_initial_context(self):
         return ParameterContext(self.graph)
 
-    def get_marking_table_entry(self, marking):
+    def _create_marking_table_entry(self, index):
+        self.marking_table[index] = MarkingTableEntry()
+
+    def _get_marking_table_entry(self, marking):
         index = 0
         for node in self.graph.nodes:
             index *= (2 ** ((node.maximum // 2) + 1))
             index += marking[node.id]
 
         if not self.marking_table[index]:
-            self.marking_table[index] = MarkingTableEntry()
+            self._create_marking_table_entry(index)
 
         return self.marking_table[index]
 
@@ -833,7 +853,7 @@ class Unfolder():
     def _enqueue_event(self, event):
         event.init_from_preset(self.prefix.initial_marking, self.prefix.initial_context)
 
-        table_entry = self.get_marking_table_entry(event.marking)
+        table_entry = self._get_marking_table_entry(event.marking)
         if table_entry.is_possible(event):
             table_entry.add_event(event)
 
@@ -850,12 +870,12 @@ class Unfolder():
         if event is None:
             return
 
-        table_entry = self.get_marking_table_entry(event.marking)
+        table_entry = self._get_marking_table_entry(event.marking)
         event.cutoff |= (event.marking == self.prefix.initial_marking) or table_entry.is_cutoff(event)
 
         self.prefix.add_event(event)
 
-        if not event.cutoff:
+        if not event.cutoff and not event.goal:
             table_entry.add_context(event.parameter_context)
             backwards_cutoffs = table_entry.obtain_backwards_cutoffs(event)
             for backwards_cutoff in backwards_cutoffs:

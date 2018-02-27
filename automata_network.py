@@ -156,52 +156,66 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
             data += "\"{0}\" {1}\n".format(node.name, list(range(0, node.maximum + 1)))
 
         for node in graph.nodes:
+            transition_string = "\"{0}\"".format(node.name)
+            transition_string += " {0}{1}\n"
+
             for i in range(0, node.maximum):
                 mask = node.regulators
                 if node.regulators & (1 << node.id):
                     mask -= (1 << node.id)
 
-                inhibitions = FormulaBuilder(graph, mask)
-                activations = FormulaBuilder(graph, mask)
+#                inhibitions = FormulaBuilder(graph, mask)
+#                activations = FormulaBuilder(graph, mask)
 
                 for regulator_state in node.regulator_states:
-                    if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1)\
-                            and event.parameter_context.soft_limit.min[regulator_state.id] < i + 1:
-                        inhibitions.add_regulator_state(regulator_state)
+                    regulator_state_string = ""
+                    for n in graph.nodes:
+                        if mask & (1 << n.id):
+                            regulator_state_string += " and \"{0}\"={1}".format(n.name, regulator_state.regulators[n.id])
+                    if regulator_state_string:
+                        regulator_state_string = " when " + regulator_state_string[5:]
+
+                    if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1) \
+                            and event.parameter_context.lattice.min[regulator_state.id] < i + 1 \
+                            and event.parameter_context.allowed_lattice.min[regulator_state.id] < i + 1:
+                        #inhibitions.add_regulator_state(regulator_state)
+                        data += transition_string.format("{0} -> {1}".format(i + 1, i), regulator_state_string)
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i)\
-                            and event.parameter_context.soft_limit.max[regulator_state.id] > i:
-                        activations.add_regulator_state(regulator_state)
+                            and event.parameter_context.lattice.max[regulator_state.id] > i \
+                            and event.parameter_context.allowed_lattice.max[regulator_state.id] > i:
+                        #activations.add_regulator_state(regulator_state)
+                        data += transition_string.format("{0} -> {1}".format(i, i + 1), regulator_state_string)
 
-                inhibition_string = "{0} -> {1}".format(i + 1, i)
-                activation_string = "{0} -> {1}".format(i, i + 1)
-
-                inhibition_refinements = BuilderCollection()
-                inhibition_refinements.add_many(inhibitions.collapse())
-                for transition in inhibitions.extract_transitions():
-                    data += transition.format(inhibition_string)
-
-                activation_refinements = BuilderCollection()
-                activation_refinements.add_many(activations.collapse())
-                for transition in activations.extract_transitions():
-                    data += transition.format(activation_string)
-
-                while len(inhibition_refinements):
-                    new_refinements = BuilderCollection()
-                    for refinement in inhibition_refinements.builders.values():
-                        new_refinements.add_many(refinement.collapse())
-                        for transition in refinement.extract_transitions():
-                            data += transition.format(inhibition_string)
-
-                    inhibition_refinements = new_refinements
-
-                while len(activation_refinements):
-                    new_refinements = BuilderCollection()
-                    for refinement in activation_refinements.builders.values():
-                        new_refinements.add_many(refinement.collapse())
-                        for transition in refinement.extract_transitions():
-                            data += transition.format(activation_string)
-
-                    activation_refinements = new_refinements
+#                inhibition_string = "{0} -> {1}".format(i + 1, i)
+#                activation_string = "{0} -> {1}".format(i, i + 1)
+#
+#                inhibition_refinements = BuilderCollection()
+#                inhibition_refinements.add_many(inhibitions.collapse())
+#                for transition in inhibitions.extract_transitions():
+#                    data += transition.format(inhibition_string)
+#
+#                activation_refinements = BuilderCollection()
+#                activation_refinements.add_many(activations.collapse())
+#                for transition in activations.extract_transitions():
+#                    data += transition.format(activation_string)
+#
+#                while len(inhibition_refinements):
+#                    new_refinements = BuilderCollection()
+#                    for refinement in inhibition_refinements.builders.values():
+#     #                   new_refinements.add_many(refinement.collapse())
+#                        for transition in refinement.extract_transitions():
+#                            data += transition.format(inhibition_string)
+#
+#                    inhibition_refinements = new_refinements
+#
+#                while len(activation_refinements):
+#                    new_refinements = BuilderCollection()
+#                    for refinement in activation_refinements.builders.values():
+#                        new_refinements.add_many(refinement.collapse())
+#                        for transition in refinement.extract_transitions():
+#                            data += transition.format(activation_string)
+#
+#                    activation_refinements = new_refinements
 
         marking_string = ""
         for node in graph.nodes:
@@ -296,18 +310,15 @@ def restrict_context_to_model(event, model):
 
             if induced_maximum is None:
                 if induced_minimum is None:
-                    event.parameter_context.soft_limit.max[regulator_state.id] = event.marking[regulator_state.target.id]
-                    event.parameter_context.soft_limit.min[regulator_state.id] = event.marking[regulator_state.target.id]
+                    event.parameter_context.soft_limit(regulator_state, event.marking[regulator_state.target.id])
                 else:
-                    event.parameter_context.soft_limit.max[regulator_state.id] = induced_minimum
-                    event.parameter_context.soft_limit.min[regulator_state.id] = induced_minimum
+                    event.parameter_context.soft_limit(regulator_state, induced_minimum)
             else:
-                event.parameter_context.soft_limit.max[regulator_state.id] = induced_maximum
+                event.parameter_context.soft_limit_max(regulator_state, induced_maximum)
 
             if induced_minimum is None:
                 if induced_maximum is not None:
-                    event.parameter_context.soft_limit.max[regulator_state.id] = induced_maximum
-                    event.parameter_context.soft_limit.min[regulator_state.id] = induced_maximum
+                    event.parameter_context.soft_limit(regulator_state, induced_maximum)
             else:
-                event.parameter_context.soft_limit.min[regulator_state.id] = induced_minimum
+                event.parameter_context.soft_limit_min(regulator_state, induced_minimum)
 

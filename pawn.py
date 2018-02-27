@@ -2,6 +2,7 @@ import sys
 import time
 import regulatory_network
 import parametrised_unfolding
+import goal_driven_unfolding
 
 
 input_file_name = ""
@@ -11,7 +12,7 @@ goal = None
 
 timed = False
 exec_time = 0
-report_interval = None
+report_interval = 4096
 
 args = []
 i = 1
@@ -57,7 +58,7 @@ if timed:
 graph = regulatory_network.parse_regulatory_graph(input_file_name)
 
 if goal is not None:
-    parametrised_unfolding.goal = regulatory_network.PartialState(graph)
+    goal_marking = regulatory_network.PartialState(graph)
 
     for specification in goal.split(','):
         values = specification.split('=')
@@ -67,13 +68,12 @@ if goal is not None:
             print("The specified goal \"{0}\" does not match the system definition. Unknown component '{1}'.".format(goal, values[0].trim()))
             exit(2)
 
-        parametrised_unfolding.goal.mask[node.id] = True
-        parametrised_unfolding.goal.values[node.id] = int(values[1])
+        goal_marking.mask[node.id] = True
+        goal_marking.values[node.id] = int(values[1])
 
-if report_interval is None:
-    unfolder = parametrised_unfolding.Unfolder(graph)
+    unfolder = goal_driven_unfolding.GoalDrivenUnfolder(report_interval, graph, goal_marking)
 else:
-    unfolder = parametrised_unfolding.Unfolder(graph, report_interval=report_interval)
+    unfolder = parametrised_unfolding.Unfolder(report_interval, graph)
 
 unfolder.unfold()
 unfolding = unfolder.prefix
@@ -108,7 +108,10 @@ for event in unfolding.events:
         if (event.marking[i] > 0):
             marking_string += (',' + graph.nodes[i].name + str(event.marking[i]))
     marking_string = marking_string[1:]
-    output.write('e' + str(event.id) + ' [label="' + event.target.name + str(event.target_value) + '{' + context_string + '}' + '(e' + str(event.id) + ')' + bounds_string + '{' + marking_string + '}" shape=box')
+    #output.write('e' + str(event.id) + ' [label="' + event.target.name + str(event.target_value) + '{' + context_string + '}' + '(e' + str(event.id) + ')' + bounds_string + '{' + marking_string + '}" shape=box')
+    output.write('e' + str(event.id) + ' [label="' + event.target.name + str(
+        event.target_value) + '{' + context_string + '}' + '(e' + str(
+        event.id) + ')' + '{' + marking_string + '}" shape=box')
     if event.cutoff:
         cutoff_count += 1
         output.write(' style=dashed')
