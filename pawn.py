@@ -13,7 +13,7 @@ timed = False
 exec_time = 0
 
 attractors = False
-attractor_file_name = 0
+attractor_file_name = None
 
 args = []
 i = 1
@@ -29,11 +29,9 @@ while i < len(sys.argv):
                 timed = True
             elif c == 'a':
                 attractors = True
-                if i == (len(sys.argv) - 1):
-                    print("The -a modifier is expected to be followed by a file defining an attractor.")
-                    exit(2)
-                i += 1
-                attractor_file_name = sys.argv[i]
+                if i < (len(sys.argv) - 1) and sys.argv[i][0] != '-':
+                    i += 1
+                    attractor_file_name = sys.argv[i]
             elif c == 'g':
                 if i == (len(sys.argv) - 1):
                     print("The -g modifier is expected to be followed by a marking.")
@@ -66,22 +64,25 @@ if timed:
 graph = regulatory_network.parse_regulatory_graph(input_file_name)
 
 if attractors:
-    attractor_file = open(attractor_file_name, 'r')
-    markings = []
+    if attractor_file_name is None:
+        attractor.compute_attractors(graph)
+    else:
+        attractor_file = open(attractor_file_name, 'r')
+        markings = []
 
-    line = 0
-    while True:
-        line = attractor_file.readline()
+        line = 0
+        while True:
+            line = attractor_file.readline()
 
-        if not line:
-            break
+            if not line:
+                break
 
-        markings.append(graph.build_marking(line))
+            markings.append(graph.build_marking(line))
 
-    parametrisations = attractor.identify_attractor(graph, markings)
+        parametrisations = attractor.identify_attractor(graph, markings)
 
-    for param in parametrisations.contexts:
-        print(str(param.lattice.min) + '-' + str(param.lattice.max))
+        for param in parametrisations.contexts:
+            print(str(param.lattice.min) + '-' + str(param.lattice.max))
 
 else:
     if target:
