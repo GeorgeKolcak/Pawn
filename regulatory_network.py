@@ -37,9 +37,9 @@ class RegulatorState:
         self.id = 0
         self.target = target
         self.regulators = numpy.array([0] * len(graph.nodes))
-        self.edges = [0] * len(graph.nodes)
-        self.substates = ([0] * len(graph.nodes))
-        self.superstates = ([0] * len(graph.nodes))
+        self.edges = [None] * len(graph.nodes)
+        self.substates = [None] * len(graph.nodes)
+        self.superstates = [None] * len(graph.nodes)
 
     def extend(self, graph, edge):
         self.edges[edge.source.id] = edge

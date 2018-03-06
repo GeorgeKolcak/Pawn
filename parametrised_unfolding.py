@@ -384,8 +384,12 @@ class Lattice:
 
         return (self.min >= lattice.min).all() and (self.max <= lattice.max).all()
 
+    # noinspection PyMethodMayBeStatic
+    def _initialise_child(self):
+        return Lattice()
+
     def copy(self):
-        copy = Lattice()
+        copy = self._initialise_child()
         copy.min = numpy.array(self.min)
         copy.max = numpy.array(self.max)
 
@@ -417,8 +421,8 @@ class Lattice:
 
         return False
 
-    def intersect(self, lattice):
-        intersection = Lattice()
+    def intersection(self, lattice):
+        intersection = self._initialise_child()
 
         if self.empty() or lattice.empty():
             return intersection
@@ -429,7 +433,7 @@ class Lattice:
         return intersection
 
     def union(self, lattice):
-        union = Lattice()
+        union = self._initialise_child()
 
         union.min = self.min & lattice.min
         union.max = self.max | lattice.max
@@ -493,7 +497,7 @@ class ParameterContext:
     def intersect(self, context):
         changed_indices = (self.lattice.min ^ context.lattice.min) | (self.lattice.max ^ context.lattice.max)
 
-        self.lattice = self.lattice.intersect(context.lattice)
+        self.lattice = self.lattice.intersection(context.lattice)
 
         for i in range(0, len(changed_indices)):
             if changed_indices[i]:

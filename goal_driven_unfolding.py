@@ -11,8 +11,10 @@ class SoftLimitMarkingTableEntry(parametrised_unfolding.MarkingTableEntry):
         self.context_collection.add(context)
 
     def is_possible(self, event):
-        if event.parameter_context.soft_empty() or event.parameter_context.allowed_lattice.min[event.regulator_state.id] > event.target_value or \
-                event.parameter_context.allowed_lattice.max[event.regulator_state.id] < event.target_value:
+        if event.parameter_context.soft_empty() or \
+                (event.parameter_context.allowed_lattice.min[event.regulator_state.id] < 0 and event.nature < 0) or \
+                (event.parameter_context.allowed_lattice.min[event.regulator_state.id] > event.target_value and event.nature < 0) or \
+                (event.parameter_context.allowed_lattice.max[event.regulator_state.id] < event.target_value and 0 < event.nature):
             if parametrised_unfolding.verbose:
                 print("{0} not possible, does not lead to goal.".format(event))
             return False
@@ -20,12 +22,42 @@ class SoftLimitMarkingTableEntry(parametrised_unfolding.MarkingTableEntry):
         return super().is_possible(event)
 
 
+class ReducibleLattice(parametrised_unfolding.Lattice):
+    def __init__(self):
+        super().__init__()
+
+    def empty(self):
+        mask = numpy.sign(self.min) - numpy.sign(self.max) == 0
+        return (self.min * mask > self.max * mask).any()
+
+    def _initialise_child(self):
+        return ReducibleLattice()
+
+    def limit_min(self, regulator_state_id, value):
+        if self.min[regulator_state_id] < 0:
+            return False
+
+        super().limit_min(regulator_state_id, value)
+
+    def limit_max(self, regulator_state_id, value):
+        if self.max[regulator_state_id] < 0:
+            return False
+
+        super().limit_max(regulator_state_id, value)
+
+    def forbid_inhibition(self, regulator_state_id):
+        self.min[regulator_state_id] = -1
+
+    def forbid_activation(self, regulator_state_id):
+        self.max[regulator_state_id] = -1
+
+
 class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
     def __init__(self, graph=None):
         super().__init__(graph)
 
         if graph is not None:
-            self.allowed_lattice = parametrised_unfolding.Lattice()
+            self.allowed_lattice = ReducibleLattice()
             self.allowed_lattice.min = numpy.array([0] * len(self.graph.regulator_states))
             self.allowed_lattice.max = numpy.array([1] * len(self.graph.regulator_states))
 
@@ -45,16 +77,22 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
     def intersect(self, context):
         super().intersect(context)
 
-        self.allowed_lattice = self.allowed_lattice.intersect(context.allowed_lattice)
+        self.allowed_lattice = self.allowed_lattice.intersection(context.allowed_lattice)
 
-    def soft_limit(self, context, value):
-        self.allowed_lattice.limit(context.id, value)
+    def soft_limit(self, regulator_state, value):
+        self.allowed_lattice.limit(regulator_state.id, value)
 
-    def soft_limit_min(self, context, value):
-        self.allowed_lattice.limit_min(context.id, value)
+    def soft_limit_min(self, regulator_state, value):
+        self.allowed_lattice.limit_min(regulator_state.id, value)
 
-    def soft_limit_max(self, context, value):
-        self.allowed_lattice.limit_max(context.id, value)
+    def soft_limit_max(self, regulator_state, value):
+        self.allowed_lattice.limit_max(regulator_state.id, value)
+
+    def forbid_inhibition(self, regulator_state):
+        self.allowed_lattice.forbid_inhibition(regulator_state.id)
+
+    def forbid_activation(self, regulator_state):
+        self.allowed_lattice.forbid_activation(regulator_state.id)
 
 
 class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):
@@ -77,13 +115,7 @@ class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):
             event.goal = True
         else:
             model = automata_network.ConfigurationWrapperModel(self.graph, event)
-            try :
-                reduced = model.reduce_for_goal(str(self.goal))
-                automata_network.restrict_context_to_model(event, reduced)
-            except Exception as e:
-                print("Reduction failed for event id: {0}".format(event.id))
-                print("Pint ended with {0}. Error output: {1}".format(e.returncode, e.stderr))
-                print("Model data:")
-                print(model.data)
+            reduced = model.reduce_for_goal(str(self.goal), squeeze=False)
+            automata_network.restrict_context_to_model(event, reduced)
 
         super()._add_event(event)

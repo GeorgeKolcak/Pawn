@@ -55,18 +55,20 @@ class FormulaBuilder:
 
         self.clauses[index].regulator_state = regulator_state
 
-        for node in self.graph.nodes:
-            if not self.mask & (1 << node.id):
-                continue
-            for i in range(0, regulator_state.target.maximum + 1):
-                clean_index = index - (regulator_state.regulators[node.id] << (self.index_length - self.index_map[node.id]))
-                complete_index = clean_index + (i << (self.index_length - self.index_map[node.id]))
-                if self.clauses[complete_index] is None:
-                    self.clauses[complete_index] = Clause()
-                if i == regulator_state.regulators[node.id]:
+        if not regulator_state_monotonically_minimal(regulator_state):
+            for node in self.graph.nodes:
+                if not self.mask & (1 << node.id):
                     continue
-                else:
-                    self.clauses[complete_index].add_sibling(node, complete_index)
+                clean_index = index - (regulator_state.regulators[node.id] << (self.index_length - self.index_map[node.id]))
+                for i in range(0, regulator_state.target.maximum + 1):
+                    if i == regulator_state.regulators[node.id]:
+                        continue
+
+                    complete_index = clean_index + (i << (self.index_length - self.index_map[node.id]))
+                    if self.clauses[complete_index] is None:
+                        self.clauses[complete_index] = Clause()
+                    else:
+                        self.clauses[complete_index].add_sibling(node, complete_index)
 
     def collapse(self):
         new_builders = []
@@ -78,8 +80,9 @@ class FormulaBuilder:
             new_layer = FormulaBuilder(self.graph, new_mask)
 
             for clause in self.clauses:
-                if clause is not None and clause.regulator_state is not None and node.id in clause.siblings\
-                        and len(clause.siblings[node.id]) == node.maximum:
+                if clause is not None and clause.regulator_state is not None and node.id in clause.siblings and \
+                        len(clause.siblings[node.id]) == node.maximum and clause.regulator_state.edges[node.id].monotonous and \
+                        not regulator_state_monotonically_minimal(clause.regulator_state):
                     new_layer.add_regulator_state(clause.regulator_state)
                     clause.is_subsumed = True
                     for sibling in clause.siblings[node.id]:
@@ -98,15 +101,19 @@ class FormulaBuilder:
                 transition_string = "\"{0}\" ".format(clause.regulator_state.target.name)
                 transition_string += "{0}"
 
-                if self.mask:
-                    regulator_string = ""
-                    for node in self.graph.nodes:
-                        if not self.mask & (1 << node.id):
-                            continue
-                        regulator_string += " and \"{0}\"={1}".format(node.name, clause.regulator_state.regulators[node.id])
-                    regulator_string = regulator_string[5:]
+                monotonically_minimal = regulator_state_monotonically_minimal(clause.regulator_state)
 
+                regulator_string = ""
+                for node in self.graph.nodes:
+                    if not self.mask & (1 << node.id) or (monotonically_minimal and clause.regulator_state.edges[node.id].monotonous):
+                        continue
+                    regulator_string += " and \"{0}\"={1}".format(node.name, clause.regulator_state.regulators[node.id])
+                regulator_string = regulator_string[5:]
+
+                if regulator_string:
                     transition_string += " when {0}\n".format(regulator_string)
+                else:
+                    transition_string += "\n"
 
                 transitions.append(transition_string)
 
@@ -156,66 +163,55 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
             data += "\"{0}\" {1}\n".format(node.name, list(range(0, node.maximum + 1)))
 
         for node in graph.nodes:
-            transition_string = "\"{0}\"".format(node.name)
-            transition_string += " {0}{1}\n"
-
             for i in range(0, node.maximum):
                 mask = node.regulators
                 if node.regulators & (1 << node.id):
                     mask -= (1 << node.id)
 
-#                inhibitions = FormulaBuilder(graph, mask)
-#                activations = FormulaBuilder(graph, mask)
+                inhibitions = FormulaBuilder(graph, mask)
+                activations = FormulaBuilder(graph, mask)
 
                 for regulator_state in node.regulator_states:
-                    regulator_state_string = ""
-                    for n in graph.nodes:
-                        if mask & (1 << n.id):
-                            regulator_state_string += " and \"{0}\"={1}".format(n.name, regulator_state.regulators[n.id])
-                    if regulator_state_string:
-                        regulator_state_string = " when " + regulator_state_string[5:]
 
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1) \
                             and event.parameter_context.lattice.min[regulator_state.id] < i + 1 \
                             and event.parameter_context.allowed_lattice.min[regulator_state.id] < i + 1:
-                        #inhibitions.add_regulator_state(regulator_state)
-                        data += transition_string.format("{0} -> {1}".format(i + 1, i), regulator_state_string)
+                        inhibitions.add_regulator_state(regulator_state)
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i)\
                             and event.parameter_context.lattice.max[regulator_state.id] > i \
                             and event.parameter_context.allowed_lattice.max[regulator_state.id] > i:
-                        #activations.add_regulator_state(regulator_state)
-                        data += transition_string.format("{0} -> {1}".format(i, i + 1), regulator_state_string)
+                        activations.add_regulator_state(regulator_state)
 
-#                inhibition_string = "{0} -> {1}".format(i + 1, i)
-#                activation_string = "{0} -> {1}".format(i, i + 1)
-#
-#                inhibition_refinements = BuilderCollection()
-#                inhibition_refinements.add_many(inhibitions.collapse())
-#                for transition in inhibitions.extract_transitions():
-#                    data += transition.format(inhibition_string)
-#
-#                activation_refinements = BuilderCollection()
-#                activation_refinements.add_many(activations.collapse())
-#                for transition in activations.extract_transitions():
-#                    data += transition.format(activation_string)
-#
-#                while len(inhibition_refinements):
-#                    new_refinements = BuilderCollection()
-#                    for refinement in inhibition_refinements.builders.values():
-#     #                   new_refinements.add_many(refinement.collapse())
-#                        for transition in refinement.extract_transitions():
-#                            data += transition.format(inhibition_string)
-#
-#                    inhibition_refinements = new_refinements
-#
-#                while len(activation_refinements):
-#                    new_refinements = BuilderCollection()
-#                    for refinement in activation_refinements.builders.values():
-#                        new_refinements.add_many(refinement.collapse())
-#                        for transition in refinement.extract_transitions():
-#                            data += transition.format(activation_string)
-#
-#                    activation_refinements = new_refinements
+                inhibition_string = "{0} -> {1}".format(i + 1, i)
+                activation_string = "{0} -> {1}".format(i, i + 1)
+
+                inhibition_refinements = BuilderCollection()
+                inhibition_refinements.add_many(inhibitions.collapse())
+                for transition in inhibitions.extract_transitions():
+                    data += transition.format(inhibition_string)
+
+                activation_refinements = BuilderCollection()
+                activation_refinements.add_many(activations.collapse())
+                for transition in activations.extract_transitions():
+                    data += transition.format(activation_string)
+
+                while len(inhibition_refinements):
+                    new_refinements = BuilderCollection()
+                    for refinement in inhibition_refinements.builders.values():
+                        new_refinements.add_many(refinement.collapse())
+                        for transition in refinement.extract_transitions():
+                            data += transition.format(inhibition_string)
+
+                    inhibition_refinements = new_refinements
+
+                while len(activation_refinements):
+                    new_refinements = BuilderCollection()
+                    for refinement in activation_refinements.builders.values():
+                        new_refinements.add_many(refinement.collapse())
+                        for transition in refinement.extract_transitions():
+                            data += transition.format(activation_string)
+
+                    activation_refinements = new_refinements
 
         marking_string = ""
         for node in graph.nodes:
@@ -229,6 +225,17 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
     def populate_popen_args(self, args, kwargs): #workaround until pypint is fixed
         kwargs["input"] = self.data
         super(pypint.InMemoryModel, self).populate_popen_args(args, kwargs)
+
+
+def regulator_state_monotonically_minimal(regulator_state):
+    for edge in regulator_state.edges:
+        if edge is None:
+            continue
+        if (edge.monotonous == 1 and regulator_state.regulators[edge.source.id] != 0) or \
+                (edge.monotonous == -1 and regulator_state.regulators[edge.source.id] != edge.source.maximum):
+            return False
+
+    return True
 
 
 class Transition:
@@ -253,12 +260,15 @@ class TransitionCollection:
     def add_transition(self, an_transition):
         regulator_mask = 0
         regulator_state = [0] * len(self.graph.nodes)
-        for origin in an_transition.origins:
-            regulator = self.graph.get_node(origin[0])
+        for condition in an_transition.conds:
+            regulator = self.graph.get_node(condition)
             regulator_mask += (1 << regulator.id)
-            regulator_state[regulator.id] = origin[1]
+            regulator_state[regulator.id] = an_transition.conds[condition]
 
-            regulator_mask &= self.graph.get_node(an_transition.a).regulators
+        target = self.graph.get_node(an_transition.a)
+        if target.regulators & (1 << target.id):
+            regulator_mask += (1 << target.id)
+            regulator_state[target.id] = an_transition.i
 
         self.transitions.append(Transition(regulator_state, regulator_mask))
 
@@ -309,16 +319,12 @@ def restrict_context_to_model(event, model):
                         induced_minimum = min(induced_minimum, i)
 
             if induced_maximum is None:
-                if induced_minimum is None:
-                    event.parameter_context.soft_limit(regulator_state, event.marking[regulator_state.target.id])
-                else:
-                    event.parameter_context.soft_limit(regulator_state, induced_minimum)
+                event.parameter_context.forbid_activation(regulator_state)
             else:
                 event.parameter_context.soft_limit_max(regulator_state, induced_maximum)
 
             if induced_minimum is None:
-                if induced_maximum is not None:
-                    event.parameter_context.soft_limit(regulator_state, induced_maximum)
+                event.parameter_context.forbid_inhibition(regulator_state)
             else:
                 event.parameter_context.soft_limit_min(regulator_state, induced_minimum)
 

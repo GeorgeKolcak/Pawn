@@ -65,7 +65,7 @@ if goal is not None:
 
         node = graph.get_node(values[0].strip())
         if node is None:
-            print("The specified goal \"{0}\" does not match the system definition. Unknown component '{1}'.".format(goal, values[0].trim()))
+            print("The specified goal \"{0}\" does not match the system definition. Unknown component '{1}'.".format(goal, values[0].strip()))
             exit(2)
 
         goal_marking.mask[node.id] = True
