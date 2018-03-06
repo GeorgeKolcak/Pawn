@@ -22,6 +22,14 @@ class SoftLimitMarkingTableEntry(parametrised_unfolding.MarkingTableEntry):
         return super().is_possible(event)
 
 
+class SoftLimitMarkingTable(parametrised_unfolding.MarkingTable):
+    def __init__(self, graph):
+        super().__init__(graph)
+
+    def initialise_empty_entry(self, index):
+        self.entries[index] = SoftLimitMarkingTableEntry()
+
+
 class ReducibleLattice(parametrised_unfolding.Lattice):
     def __init__(self):
         super().__init__()
@@ -108,8 +116,8 @@ class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):
     def _build_initial_context(self):
         return SoftLimitParameterContext(self.graph)
 
-    def _create_marking_table_entry(self, index):
-        self.marking_table[index] = SoftLimitMarkingTableEntry()
+    def _build_marking_table(self):
+        return SoftLimitMarkingTable(self.graph)
 
     def _add_event(self, event):
         if event is None:

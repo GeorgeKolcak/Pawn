@@ -346,6 +346,31 @@ class MarkingTableEntry:
         return True
 
 
+class MarkingTable:
+    def __init__(self, graph):
+        self.graph = graph
+        self.entries = dict()
+
+    def _compute_index(self, marking):
+        index = 0
+        for node in self.graph.nodes:
+            index *= (2 ** ((node.maximum // 2) + 1))
+            index += marking[node.id]
+
+        return index
+
+    def initialise_empty_entry(self, index):
+        self.entries[index] = MarkingTableEntry()
+
+    def get_entry(self, marking):
+        index = self._compute_index(marking)
+
+        if index not in self.entries:
+            self.initialise_empty_entry(index)
+
+        return self.entries[index]
+
+
 class Lattice:
     def __init__(self):
         self.invalidate()
@@ -690,11 +715,7 @@ class Unfolder():
             self.prefix.conditions.append(initial_condition)
 
         self.possible_extensions = PossibleExtensionQueue()
-        self.marking_table = [None]
-
-        for node in self.graph.nodes:
-            for i in range(0,((node.maximum // 2) + 1)):
-                self.marking_table += self.marking_table
+        self.marking_table = self._build_marking_table()
 
     def _build_initial_marking(self):
         initial_marking = []
@@ -706,19 +727,8 @@ class Unfolder():
     def _build_initial_context(self):
         return ParameterContext(self.graph)
 
-    def _create_marking_table_entry(self, index):
-        self.marking_table[index] = MarkingTableEntry()
-
-    def _get_marking_table_entry(self, marking):
-        index = 0
-        for node in self.graph.nodes:
-            index *= (2 ** ((node.maximum // 2) + 1))
-            index += marking[node.id]
-
-        if not self.marking_table[index]:
-            self._create_marking_table_entry(index)
-
-        return self.marking_table[index]
+    def _build_marking_table(self):
+        return MarkingTable(self.graph)
 
     def unfold(self):
         self._compute_possible_extensions(self.prefix.conditions[0])
@@ -857,7 +867,7 @@ class Unfolder():
     def _enqueue_event(self, event):
         event.init_from_preset(self.prefix.initial_marking, self.prefix.initial_context)
 
-        table_entry = self._get_marking_table_entry(event.marking)
+        table_entry = self.marking_table.get_entry(event.marking)
         if table_entry.is_possible(event):
             table_entry.add_event(event)
 
@@ -874,7 +884,7 @@ class Unfolder():
         if event is None:
             return
 
-        table_entry = self._get_marking_table_entry(event.marking)
+        table_entry = self.marking_table.get_entry(event.marking)
         event.cutoff |= (event.marking == self.prefix.initial_marking) or table_entry.is_cutoff(event)
 
         self.prefix.add_event(event)
