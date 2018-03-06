@@ -156,7 +156,7 @@ class BuilderCollection():
 
 
 class ConfigurationWrapperModel(pypint.InMemoryModel):
-    def __init__(self, graph, event):
+    def __init__(self, graph, context, marking):
         data = ""
 
         for node in graph.nodes:
@@ -174,12 +174,12 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
                 for regulator_state in node.regulator_states:
 
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1) \
-                            and event.parameter_context.lattice.min[regulator_state.id] < i + 1 \
-                            and event.parameter_context.allowed_lattice.min[regulator_state.id] < i + 1:
+                            and context.lattice.min[regulator_state.id] < i + 1 \
+                            and context.allowed_lattice.min[regulator_state.id] < i + 1:
                         inhibitions.add_regulator_state(regulator_state)
                     if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i)\
-                            and event.parameter_context.lattice.max[regulator_state.id] > i \
-                            and event.parameter_context.allowed_lattice.max[regulator_state.id] > i:
+                            and context.lattice.max[regulator_state.id] > i \
+                            and context.allowed_lattice.max[regulator_state.id] > i:
                         activations.add_regulator_state(regulator_state)
 
                 inhibition_string = "{0} -> {1}".format(i + 1, i)
@@ -215,7 +215,7 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
 
         marking_string = ""
         for node in graph.nodes:
-            marking_string += ", \"{0}\"={1}".format(node.name, event.marking[node.id])
+            marking_string += ", \"{0}\"={1}".format(node.name, marking[node.id])
         marking_string = marking_string[2:]
 
         data += "initial_context {0}\n".format(marking_string)
@@ -280,27 +280,27 @@ class TransitionCollection:
         return False
 
 
-def restrict_context_to_model(event, model):
-    activations = [None] * len(event.parameter_context.graph.nodes)
-    inhibitions = [None] * len(event.parameter_context.graph.nodes)
+def restrict_context_to_model(graph, context, model):
+    activations = [None] * len(graph.nodes)
+    inhibitions = [None] * len(graph.nodes)
 
-    for node in event.parameter_context.graph.nodes:
+    for node in graph.nodes:
         activations[node.id] = [None] * node.maximum
         inhibitions[node.id] = [None] * node.maximum
 
         for i in range(0, node.maximum):
-            activations[node.id][i] = TransitionCollection(event.parameter_context.graph)
-            inhibitions[node.id][i] = TransitionCollection(event.parameter_context.graph)
+            activations[node.id][i] = TransitionCollection(graph)
+            inhibitions[node.id][i] = TransitionCollection(graph)
 
     for transition in model.local_transitions:
-        target = event.parameter_context.graph.get_node(transition.a)
+        target = graph.get_node(transition.a)
 
         if transition.i < transition.j:
             activations[target.id][transition.i].add_transition(transition)
         else:
             inhibitions[target.id][transition.j].add_transition(transition)
 
-    for node in event.parameter_context.graph.nodes:
+    for node in graph.nodes:
         for regulator_state in node.regulator_states:
             induced_maximum = None
             induced_minimum = None
@@ -319,12 +319,12 @@ def restrict_context_to_model(event, model):
                         induced_minimum = min(induced_minimum, i)
 
             if induced_maximum is None:
-                event.parameter_context.forbid_activation(regulator_state)
+                context.forbid_activation(regulator_state)
             else:
-                event.parameter_context.soft_limit_max(regulator_state, induced_maximum)
+                context.soft_limit_max(regulator_state, induced_maximum)
 
             if induced_minimum is None:
-                event.parameter_context.forbid_inhibition(regulator_state)
+                context.forbid_inhibition(regulator_state)
             else:
-                event.parameter_context.soft_limit_min(regulator_state, induced_minimum)
+                context.soft_limit_min(regulator_state, induced_minimum)
 

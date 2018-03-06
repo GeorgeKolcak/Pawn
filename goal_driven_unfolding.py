@@ -100,6 +100,10 @@ class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):
         super().__init__(report_interval, graph, initial_marking, initial_context)
 
         self.goal = goal
+        if self.goal.matches(self.prefix.initial_marking):
+            self.prefix.initial_context.allowed_lattice.invalidate()
+        else:
+            self.reduce_for_goal(self.prefix.initial_context, self.prefix.initial_marking)
 
     def _build_initial_context(self):
         return SoftLimitParameterContext(self.graph)
@@ -114,8 +118,11 @@ class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):
         if self.goal.matches(event.marking):
             event.goal = True
         else:
-            model = automata_network.ConfigurationWrapperModel(self.graph, event)
-            reduced = model.reduce_for_goal(str(self.goal), squeeze=False)
-            automata_network.restrict_context_to_model(event, reduced)
+            self.reduce_for_goal(event.parameter_context, event.marking)
 
         super()._add_event(event)
+
+    def reduce_for_goal(self, context, marking):
+        model = automata_network.ConfigurationWrapperModel(self.graph, context, marking)
+        reduced = model.reduce_for_goal(str(self.goal), squeeze=False)
+        automata_network.restrict_context_to_model(self.graph, context, reduced)
