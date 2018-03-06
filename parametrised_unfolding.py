@@ -255,13 +255,15 @@ class ParameterContextCollection():
         return False
 
     def add(self, context):
-        for i in range(0, len(self.contexts)):
-            if context.issubset(self.contexts[i]):
+        index = 0
+        while index < len(self.contexts):
+            if context.issubset(self.contexts[index]):
                 return
 
-            if self.contexts[i].issubset(context):
-                self.contexts.remove(self.contexts[i])
-                i -= 1
+            if self.contexts[index].issubset(context):
+                del self.contexts[index]
+            else:
+                index += 1
 
         self.contexts.append(context)
 
