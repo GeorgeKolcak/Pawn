@@ -25,7 +25,7 @@ class FormulaBuilder:
         for node in graph.nodes:
             if not mask & (1 << node.id):
                 continue
-            self.index_map[node.id] = last_index
+            self.index_map[node.id] = last_index + node.maximum - 1
             for i in range(0, (node.maximum // 2) + 1):
                 self.clauses += self.clauses
 
@@ -55,12 +55,12 @@ class FormulaBuilder:
 
         self.clauses[index].regulator_state = regulator_state
 
-        if not regulator_state_monotonically_minimal(regulator_state):
+        if not regulator_state.is_monotonically_minimal():
             for node in self.graph.nodes:
                 if not self.mask & (1 << node.id):
                     continue
                 clean_index = index - (regulator_state.regulators[node.id] << (self.index_length - self.index_map[node.id]))
-                for i in range(0, regulator_state.target.maximum + 1):
+                for i in range(0, node.maximum + 1):
                     if i == regulator_state.regulators[node.id]:
                         continue
 
@@ -81,8 +81,8 @@ class FormulaBuilder:
 
             for clause in self.clauses:
                 if clause is not None and clause.regulator_state is not None and node.id in clause.siblings and \
-                        len(clause.siblings[node.id]) == node.maximum and clause.regulator_state.edges[node.id].monotonous and \
-                        not regulator_state_monotonically_minimal(clause.regulator_state):
+                        len(clause.siblings[node.id]) == node.maximum and clause.regulator_state.edges[node.id].monotonous is not None and \
+                        not clause.regulator_state.is_monotonically_minimal:
                     new_layer.add_regulator_state(clause.regulator_state)
                     clause.is_subsumed = True
                     for sibling in clause.siblings[node.id]:
@@ -101,11 +101,11 @@ class FormulaBuilder:
                 transition_string = "\"{0}\" ".format(clause.regulator_state.target.name)
                 transition_string += "{0}"
 
-                monotonically_minimal = regulator_state_monotonically_minimal(clause.regulator_state)
+                monotonically_minimal = clause.regulator_state.is_monotonically_minimal()
 
                 regulator_string = ""
                 for node in self.graph.nodes:
-                    if not self.mask & (1 << node.id) or (monotonically_minimal and clause.regulator_state.edges[node.id].monotonous):
+                    if not self.mask & (1 << node.id) or (monotonically_minimal and clause.regulator_state.edges[node.id].monotonous is not None):
                         continue
                     regulator_string += " and \"{0}\"={1}".format(node.name, clause.regulator_state.regulators[node.id])
                 regulator_string = regulator_string[5:]
@@ -172,14 +172,13 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
                 activations = FormulaBuilder(graph, mask)
 
                 for regulator_state in node.regulator_states:
-
-                    if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i + 1) \
-                            and context.lattice.min[regulator_state.id] < i + 1 \
-                            and context.allowed_lattice.min[regulator_state.id] < i + 1:
+                    if regulator_state.matches_value(node.id, i + 1) and \
+                            context.lattice.min[regulator_state.id] < i + 1 and \
+                            context.allowed_lattice.min[regulator_state.id] < i + 1:
                         inhibitions.add_regulator_state(regulator_state)
-                    if (not node.regulators & (1 << node.id) or regulator_state.regulators[node.id] == i)\
-                            and context.lattice.max[regulator_state.id] > i \
-                            and context.allowed_lattice.max[regulator_state.id] > i:
+                    if regulator_state.matches_value(node.id, i) and \
+                            context.lattice.max[regulator_state.id] > i and \
+                            context.allowed_lattice.max[regulator_state.id] > i:
                         activations.add_regulator_state(regulator_state)
 
                 inhibition_string = "{0} -> {1}".format(i + 1, i)
@@ -227,17 +226,6 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
         super(pypint.InMemoryModel, self).populate_popen_args(args, kwargs)
 
 
-def regulator_state_monotonically_minimal(regulator_state):
-    for edge in regulator_state.edges:
-        if edge is None:
-            continue
-        if (edge.monotonous == 1 and regulator_state.regulators[edge.source.id] != 0) or \
-                (edge.monotonous == -1 and regulator_state.regulators[edge.source.id] != edge.source.maximum):
-            return False
-
-    return True
-
-
 class Transition:
     def __init__(self, regulator_state, regulator_mask):
         self.regulator_state = regulator_state
@@ -246,7 +234,7 @@ class Transition:
     def __contains__(self, regulator_state):
         mask = self.regulator_mask & regulator_state.target.regulators
         for i in range(0, len(self.regulator_state)):
-            if mask & (1 << i) and self.regulator_state[i] != regulator_state.regulators[i]:
+            if mask & (1 << i) and not regulator_state.matches_value(i, self.regulator_state[i]):
                 return False
 
         return True

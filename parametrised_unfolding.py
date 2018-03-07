@@ -551,7 +551,7 @@ class ParameterContext:
             if edge:
                 substate = regulator_state.substates[edge.source.id]
                 superstate = regulator_state.superstates[edge.source.id]
-                if edge.monotonous:
+                if edge.monotonous is not None:
                     if edge.monotonous > 0:
                         if substate:
                             self.enforce_plus_monotonicity(substate, regulator_state)
@@ -582,14 +582,15 @@ class ParameterContext:
         self.open_infima[regulator_state.target].remove(regulator_state)
 
         for edge in regulator_state.edges:
-            if not edge:
+            if edge is None or edge.monotonous is None:
                 continue
-            prime_filter = None
+
             if edge.monotonous < 0:
                 prime_filter = regulator_state.substates[edge.source.id]
-            if edge.monotonous > 0:
+            else:
                 prime_filter = regulator_state.superstates[edge.source.id]
-            if prime_filter:
+
+            if prime_filter is not None:
                 self.open_infima[regulator_state.target].add(prime_filter)
                 if self.lattice.min[prime_filter.id] == self.lattice.max[prime_filter.id]:
                     self.close_infimum(prime_filter)
@@ -598,14 +599,15 @@ class ParameterContext:
         self.open_suprema[regulator_state.target].remove(regulator_state)
 
         for edge in regulator_state.edges:
-            if not edge:
+            if edge is None or edge.monotonous is None:
                 continue
-            prime_ideal = None
+
             if edge.monotonous < 0:
                 prime_ideal = regulator_state.superstates[edge.source.id]
-            if edge.monotonous > 0:
+            else:
                 prime_ideal = regulator_state.substates[edge.source.id]
-            if prime_ideal:
+
+            if prime_ideal is not None:
                 self.open_suprema[regulator_state.target].add(prime_ideal)
                 if self.lattice.min[prime_ideal.id] == self.lattice.max[prime_ideal.id]:
                     self.close_supremum(prime_ideal)
@@ -752,8 +754,7 @@ class Unfolder():
             if node_cosets[concurrent_condition.node.id] is None:
                 node_cosets[concurrent_condition.node.id] = []
             node_cosets[concurrent_condition.node.id].append(concurrent_condition)
-            if not (coset_nodes & (1 << concurrent_condition.node.id)):
-                coset_nodes += (1 << concurrent_condition.node.id)
+            coset_nodes = coset_nodes | (1 << concurrent_condition.node.id)
 
         return coset_nodes
 
@@ -778,23 +779,12 @@ class Unfolder():
                 new_possible_presets = []
 
                 for concurrent_condition in node_cosets[i]:
-                    if regulator_state.edges[i].threshold:
-                        if ((regulator_state.regulators[i] == 0) and
-                            (concurrent_condition.value < regulator_state.edges[i].threshold)) or \
-                                ((regulator_state.regulators[i] == self.graph.nodes[i].maximum) and
-                                 (concurrent_condition.value >= regulator_state.edges[i].threshold)):
-                            for possible_preset in possible_presets:
-                                if possible_preset.issubset(concurrent_condition.coset):
-                                    npp = set(possible_preset)
-                                    npp.add(concurrent_condition)
-                                    new_possible_presets.append(npp)
-                    else:
-                        if regulator_state.regulators[i] == concurrent_condition.value:
-                            for possible_preset in possible_presets:
-                                if possible_preset.issubset(concurrent_condition.coset):
-                                    npp = set(possible_preset)
-                                    npp.add(concurrent_condition)
-                                    new_possible_presets.append(npp)
+                    if regulator_state.matches_value(i, concurrent_condition.value):
+                        for possible_preset in possible_presets:
+                            if possible_preset.issubset(concurrent_condition.coset):
+                                npp = set(possible_preset)
+                                npp.add(concurrent_condition)
+                                new_possible_presets.append(npp)
 
                 if not new_possible_presets:
                     break
@@ -909,11 +899,11 @@ def compute_monotonicity_extremes(node, positive):
     activators = []
 
     for edge in node.regulator_states[0].edges:
-        if not edge:
+        if not edge or edge.monotonous is None:
             continue
         if edge.monotonous < 0:
             inhibitors.append(edge.source)
-        elif edge.monotonous > 0:
+        else:
             activators.append(edge.source)
 
     extremes = set()

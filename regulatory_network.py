@@ -25,8 +25,8 @@ class Edge:
         self.source = Node()
         self.target = Node()
         self.observable = False
-        self.monotonous = 0
-        self.threshold = 0
+        self.monotonous = None
+        self.threshold = None
 
     def __str__(self):
         return str(self.id) + ':' + str(self.source) + '->' + str(self.target)
@@ -40,6 +40,26 @@ class RegulatorState:
         self.edges = [None] * len(graph.nodes)
         self.substates = [None] * len(graph.nodes)
         self.superstates = [None] * len(graph.nodes)
+
+    def matches_value(self, node_id, value):
+        if self.target.regulators & (1 << node_id):
+            if self.edges[node_id].threshold is None:
+                return self.regulators[node_id] == value
+            else:
+                return (value < self.edges[node_id].threshold and self.regulators[node_id] == 0) or \
+                       (value >= self.edges[node_id].threshold and self.regulators[node_id] == self.edges[node_id].source.maximum)
+        else:
+            return True
+
+    def is_monotonically_minimal(self):
+        for i in range(0, len(self.regulators)):
+            if not self.target.regulators & (1 << i):
+                continue
+            if (self.edges[i].monotonous == 1 and self.regulators[i] != 0) or \
+                (self.edges[i].monotonous == -1 and self.regulators[i] != self.edges[i].source.maximum):
+                return False
+
+        return True
 
     def extend(self, graph, edge):
         self.edges[edge.source.id] = edge
@@ -75,12 +95,13 @@ class RegulatorState:
         return extended_states
 
     def __str__(self):
-        string = ''
-        for r in self.regulators:
-            string += ',' + string(r)
+        string = ""
+        for i in range(0, len(self.regulators)):
+            if self.target.regulators & (1 << i) or i == self.target.id:
+                string += ", {0}={1}".format(self.edges[i].source.name, self.regulators[i])
 
-        string = string[1:]
-        return '{' + string + '}'
+        string = "{{{0}}}".format(string[2:])
+        return string
 
 
 class PartialState:
@@ -200,24 +221,23 @@ def parse_regulatory_graph(filename):
 
     for node in graph.nodes:
         if node.regulator_states:
-            possible = minmax
+            possible = True
             inhibitors = numpy.array([0] * len(graph.nodes))
             activators = numpy.array([0] * len(graph.nodes))
             for edge in node.regulator_states[0].edges:
                 if not edge:
                     continue
-                if edge.monotonous:
+                if edge.monotonous is None:
+                    possible = False
+                    break
+                else:
                     if edge.monotonous > 0:
                         inhibitors[edge.source.id] = 0
                         activators[edge.source.id] = edge.source.maximum
                     else:
                         inhibitors[edge.source.id] = edge.source.maximum
                         activators[edge.source.id] = 0
-                else:
-                    possible = False
-                    break
-                if edge.observable:
-                    possible |= True
+                possible &= edge.observable
             if possible:
                 for regulator_state in node.regulator_states:
                     if (regulator_state.regulators == inhibitors).all():

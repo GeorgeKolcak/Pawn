@@ -67,7 +67,12 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
         if graph is not None:
             self.allowed_lattice = ReducibleLattice()
             self.allowed_lattice.min = numpy.array([0] * len(self.graph.regulator_states))
-            self.allowed_lattice.max = numpy.array([1] * len(self.graph.regulator_states))
+
+            maximums = [0] * len(self.graph.regulator_states)
+            for regulator_state_id in graph.regulator_states:
+                maximums[regulator_state_id] = graph.regulator_states[regulator_state_id].target.maximum
+
+            self.allowed_lattice.max = numpy.array(maximums)
 
     def soft_empty(self):
         return (not self.allowed_lattice) or self.allowed_lattice.empty()
