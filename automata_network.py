@@ -7,6 +7,15 @@ class Clause:
         self.siblings = dict()
         self.is_subsumed = False
 
+    def has_all_siblings(self, node):
+        if self.regulator_state is None or node.id not in self.siblings:
+            return False
+
+        if self.regulator_state.edges[node.id].threshold is None:
+            return len(self.siblings[node.id]) == node.maximum
+        else:
+            return len(self.siblings[node.id]) == 1
+
     def add_sibling(self, node, sibling):
         if node.id not in self.siblings:
             self.siblings[node.id] = set()
@@ -85,8 +94,8 @@ class FormulaBuilder:
             new_layer = FormulaBuilder(self.graph, new_mask, self.nature)
 
             for clause in self.clauses:
-                if clause is not None and clause.regulator_state is not None and node.id in clause.siblings and \
-                        len(clause.siblings[node.id]) == node.maximum and clause.regulator_state.edges[node.id].monotonous is not None and \
+                if clause is not None and clause.has_all_siblings(node) and \
+                        clause.regulator_state.edges[node.id].monotonous is not None and \
                         not self.regulator_state_is_critical(clause.regulator_state):
                     new_layer.add_regulator_state(clause.regulator_state)
                     clause.is_subsumed = True
