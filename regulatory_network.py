@@ -61,6 +61,16 @@ class RegulatorState:
 
         return True
 
+    def is_monotonically_maximal(self):
+        for i in range(0, len(self.regulators)):
+            if not self.target.regulators & (1 << i):
+                continue
+            if (self.edges[i].monotonous == 1 and self.regulators[i] != self.edges[i].source.maximum) or \
+                (self.edges[i].monotonous == -1 and self.regulators[i] != 0):
+                return False
+
+        return True
+
     def extend(self, graph, edge):
         self.edges[edge.source.id] = edge
         extended_states = []
@@ -97,7 +107,7 @@ class RegulatorState:
     def __str__(self):
         string = ""
         for i in range(0, len(self.regulators)):
-            if self.target.regulators & (1 << i) or i == self.target.id:
+            if self.target.regulators & (1 << i):
                 string += ", {0}={1}".format(self.edges[i].source.name, self.regulators[i])
 
         string = "{{{0}}}".format(string[2:])
@@ -222,30 +232,21 @@ def parse_regulatory_graph(filename):
     for node in graph.nodes:
         if node.regulator_states:
             possible = True
-            inhibitors = numpy.array([0] * len(graph.nodes))
-            activators = numpy.array([0] * len(graph.nodes))
             for edge in node.regulator_states[0].edges:
-                if not edge:
+                if edge is None:
                     continue
-                if edge.monotonous is None:
+                if edge.monotonous is None or not edge.observable:
                     possible = False
                     break
-                else:
-                    if edge.monotonous > 0:
-                        inhibitors[edge.source.id] = 0
-                        activators[edge.source.id] = edge.source.maximum
-                    else:
-                        inhibitors[edge.source.id] = edge.source.maximum
-                        activators[edge.source.id] = 0
-                possible &= edge.observable
+
             if possible:
                 for regulator_state in node.regulator_states:
-                    if (regulator_state.regulators == inhibitors).all():
+                    if regulator_state.is_monotonically_minimal():
                         if minmax:
                             graph.known_maximums[regulator_state.id] = 0
                         else:
                             graph.known_maximums[regulator_state.id] = (node.maximum - 1)
-                    if (regulator_state.regulators == activators).all():
+                    if regulator_state.is_monotonically_maximal():
                         if minmax:
                             graph.known_minimums[regulator_state.id] = node.maximum
                         else:

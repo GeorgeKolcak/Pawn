@@ -15,9 +15,10 @@ class Clause:
 
 
 class FormulaBuilder:
-    def __init__(self, graph, mask):
+    def __init__(self, graph, mask, nature):
         self.graph = graph
         self.mask = mask
+        self.nature = nature
         self.clauses = [None]
         self.index_map = dict()
 
@@ -40,6 +41,10 @@ class FormulaBuilder:
 
         return True
 
+    def regulator_state_is_critical(self, regulator_state):
+        return (self.nature > 1 and regulator_state.is_monotonically_minimal()) or \
+               (self.nature < 1 and regulator_state.is_monotonically_maximal())
+
     def add_regulator_state(self, regulator_state):
         index = 0
         for node in self.graph.nodes:
@@ -55,7 +60,7 @@ class FormulaBuilder:
 
         self.clauses[index].regulator_state = regulator_state
 
-        if not regulator_state.is_monotonically_minimal():
+        if not self.regulator_state_is_critical(regulator_state):
             for node in self.graph.nodes:
                 if not self.mask & (1 << node.id):
                     continue
@@ -77,12 +82,12 @@ class FormulaBuilder:
             if not self.mask & (1 << node.id):
                 continue
             new_mask = self.mask - (1 << node.id)
-            new_layer = FormulaBuilder(self.graph, new_mask)
+            new_layer = FormulaBuilder(self.graph, new_mask, self.nature)
 
             for clause in self.clauses:
                 if clause is not None and clause.regulator_state is not None and node.id in clause.siblings and \
                         len(clause.siblings[node.id]) == node.maximum and clause.regulator_state.edges[node.id].monotonous is not None and \
-                        not clause.regulator_state.is_monotonically_minimal:
+                        not self.regulator_state_is_critical(clause.regulator_state):
                     new_layer.add_regulator_state(clause.regulator_state)
                     clause.is_subsumed = True
                     for sibling in clause.siblings[node.id]:
@@ -101,11 +106,11 @@ class FormulaBuilder:
                 transition_string = "\"{0}\" ".format(clause.regulator_state.target.name)
                 transition_string += "{0}"
 
-                monotonically_minimal = clause.regulator_state.is_monotonically_minimal()
+                critical = self.regulator_state_is_critical(clause.regulator_state)
 
                 regulator_string = ""
                 for node in self.graph.nodes:
-                    if not self.mask & (1 << node.id) or (monotonically_minimal and clause.regulator_state.edges[node.id].monotonous is not None):
+                    if not self.mask & (1 << node.id) or (critical and clause.regulator_state.edges[node.id].monotonous is not None):
                         continue
                     regulator_string += " and \"{0}\"={1}".format(node.name, clause.regulator_state.regulators[node.id])
                 regulator_string = regulator_string[5:]
@@ -120,7 +125,7 @@ class FormulaBuilder:
         return transitions
 
     def merge(self, builder):
-        if builder.mask != self.mask:
+        if builder.mask != self.mask or builder.nature != self.nature:
             return
 
         for i in range(0, len(self.clauses)):
@@ -168,8 +173,8 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
                 if node.regulators & (1 << node.id):
                     mask -= (1 << node.id)
 
-                inhibitions = FormulaBuilder(graph, mask)
-                activations = FormulaBuilder(graph, mask)
+                inhibitions = FormulaBuilder(graph, mask, -1)
+                activations = FormulaBuilder(graph, mask, 1)
 
                 for regulator_state in node.regulator_states:
                     if regulator_state.matches_value(node.id, i + 1) and \
