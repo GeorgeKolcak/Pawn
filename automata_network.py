@@ -35,7 +35,7 @@ class FormulaBuilder:
         for node in graph.nodes:
             if not mask & (1 << node.id):
                 continue
-            self.index_map[node.id] = last_index + node.maximum - 1
+            self.index_map[node.id] = last_index + (node.maximum // 2)
             for i in range(0, (node.maximum // 2) + 1):
                 self.clauses += self.clauses
 

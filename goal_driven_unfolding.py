@@ -35,11 +35,27 @@ class ReducibleLattice(parametrised_unfolding.Lattice):
         super().__init__()
 
     def empty(self):
-        mask = numpy.sign(self.min) - numpy.sign(self.max) == 0
+        if (self.min < 0).all() and (self.max < 0).all():
+            return True
+
+        mask = (self.min >= 0) * (self.max >= 0)
         return (self.min * mask > self.max * mask).any()
 
     def _initialise_child(self):
         return ReducibleLattice()
+
+    def issubset(self, lattice):
+        if lattice.empty():
+            return self.empty()
+        elif self.empty():
+            return True
+
+        min_mask = self.min >= 0
+        max_mask = self.max >= 0
+
+        return (min_mask * self.min >= min_mask * lattice.min).all() and \
+               (min_mask * lattice.min >= 0).all() and \
+               (max_mask * self.max <= max_mask * lattice.max).all()
 
     def limit_min(self, regulator_state_id, value):
         if self.min[regulator_state_id] < 0:
