@@ -82,7 +82,7 @@ class FormulaBuilder:
                     if self.clauses[complete_index] is None:
                         self.clauses[complete_index] = Clause()
                     else:
-                        self.clauses[complete_index].add_sibling(node, complete_index)
+                        self.clauses[complete_index].add_sibling(node, index)
 
     def collapse(self):
         new_builders = []
