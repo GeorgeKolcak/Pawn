@@ -11,10 +11,10 @@ class SoftLimitMarkingTableEntry(parametrised_unfolding.MarkingTableEntry):
         self.context_collection.add(context)
 
     def is_possible(self, event):
-        if event.parameter_context.soft_empty() or \
-                (event.parameter_context.allowed_lattice.min[event.regulator_state.id] < 0 and event.nature < 0) or \
-                (event.parameter_context.allowed_lattice.min[event.regulator_state.id] > event.target_value and event.nature < 0) or \
-                (event.parameter_context.allowed_lattice.max[event.regulator_state.id] < event.target_value and 0 < event.nature):
+        if event.parameter_context.disabled() or \
+                (event.parameter_context.allowed_values.min[event.target.id] < 0 and event.nature < 0) or \
+                (event.parameter_context.allowed_values.min[event.target.id] > event.target_value and event.nature < 0) or \
+                (event.parameter_context.allowed_values.max[event.target.id] < event.target_value and 0 < event.nature):
             if parametrised_unfolding.verbose:
                 print("{0} not possible, does not lead to goal.".format(event))
             return False
@@ -57,23 +57,23 @@ class ReducibleLattice(parametrised_unfolding.Lattice):
                (min_mask * lattice.min >= 0).all() and \
                (max_mask * self.max <= max_mask * lattice.max).all()
 
-    def limit_min(self, regulator_state_id, value):
-        if self.min[regulator_state_id] < 0:
+    def limit_min(self, id, value):
+        if self.min[id] < 0:
             return False
 
-        super().limit_min(regulator_state_id, value)
+        super().limit_min(id, value)
 
-    def limit_max(self, regulator_state_id, value):
-        if self.max[regulator_state_id] < 0:
+    def limit_max(self, id, value):
+        if self.max[id] < 0:
             return False
 
-        super().limit_max(regulator_state_id, value)
+        super().limit_max(id, value)
 
-    def forbid_inhibition(self, regulator_state_id):
-        self.min[regulator_state_id] = -1
+    def forbid_inhibition(self, id):
+        self.min[id] = -1
 
-    def forbid_activation(self, regulator_state_id):
-        self.max[regulator_state_id] = -1
+    def forbid_activation(self, id):
+        self.max[id] = -1
 
 
 class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
@@ -81,47 +81,47 @@ class SoftLimitParameterContext(parametrised_unfolding.ParameterContext):
         super().__init__(graph)
 
         if graph is not None:
-            self.allowed_lattice = ReducibleLattice()
-            self.allowed_lattice.min = numpy.array([0] * len(self.graph.regulator_states))
+            self.allowed_values = ReducibleLattice()
+            self.allowed_values.min = numpy.array([0] * len(self.graph.nodes))
 
-            maximums = [0] * len(self.graph.regulator_states)
-            for regulator_state_id in graph.regulator_states:
-                maximums[regulator_state_id] = graph.regulator_states[regulator_state_id].target.maximum
+            maximums = [0] * len(self.graph.nodes)
+            for node in graph.nodes:
+                maximums[node.id] = node.maximum
 
-            self.allowed_lattice.max = numpy.array(maximums)
+            self.allowed_values.max = numpy.array(maximums)
 
-    def soft_empty(self):
-        return (not self.allowed_lattice) or self.allowed_lattice.empty()
+    def disabled(self):
+        return (not self.allowed_values) or self.allowed_values.empty()
 
     def copy(self):
         copy = SoftLimitParameterContext()
         super()._populate_copy(copy)
-        copy.allowed_lattice = self.allowed_lattice.copy()
+        copy.allowed_values = self.allowed_values.copy()
 
         return copy
 
     def issubset(self, context):
-        return super().issubset(context) and self.allowed_lattice.issubset(context.allowed_lattice)
+        return super().issubset(context) and self.allowed_values.issubset(context.allowed_values)
 
     def intersect(self, context):
         super().intersect(context)
 
-        self.allowed_lattice = self.allowed_lattice.intersection(context.allowed_lattice)
+        self.allowed_values = self.allowed_values.intersection(context.allowed_values)
 
-    def soft_limit(self, regulator_state, value):
-        self.allowed_lattice.limit(regulator_state.id, value)
+    def soft_limit(self, node, value):
+        self.allowed_values.limit(node.id, value)
 
-    def soft_limit_min(self, regulator_state, value):
-        self.allowed_lattice.limit_min(regulator_state.id, value)
+    def soft_limit_min(self, node, value):
+        self.allowed_values.limit_min(node.id, value)
 
-    def soft_limit_max(self, regulator_state, value):
-        self.allowed_lattice.limit_max(regulator_state.id, value)
+    def soft_limit_max(self, node, value):
+        self.allowed_values.limit_max(node.id, value)
 
-    def forbid_inhibition(self, regulator_state):
-        self.allowed_lattice.forbid_inhibition(regulator_state.id)
+    def forbid_inhibition(self, node):
+        self.allowed_values.forbid_inhibition(node.id)
 
-    def forbid_activation(self, regulator_state):
-        self.allowed_lattice.forbid_activation(regulator_state.id)
+    def forbid_activation(self, node):
+        self.allowed_values.forbid_activation(node.id)
 
 
 class GoalDrivenUnfolder(parametrised_unfolding.Unfolder):

@@ -1,172 +1,262 @@
 import pypint
 
 
-class Clause:
-    def __init__(self):
-        self.regulator_state = None
-        self.siblings = dict()
-        self.is_subsumed = False
-
-    def has_all_siblings(self, node):
-        if self.regulator_state is None or node.id not in self.siblings:
-            return False
-
-        if self.regulator_state.edges[node.id].threshold is None:
-            return len(self.siblings[node.id]) == node.maximum
-        else:
-            return len(self.siblings[node.id]) == 1
-
-    def add_sibling(self, node, sibling):
-        if node.id not in self.siblings:
-            self.siblings[node.id] = set()
-
-        self.siblings[node.id].add(sibling)
-
-
-class FormulaBuilder:
-    def __init__(self, graph, mask, nature):
-        self.graph = graph
-        self.mask = mask
+class RegulationLimitCollection:
+    def __init__(self, nature):
         self.nature = nature
-        self.clauses = [None]
-        self.index_map = dict()
+        self.limits = []
 
-        last_index = 0
-        for node in graph.nodes:
-            if not mask & (1 << node.id):
-                continue
-            self.index_map[node.id] = last_index + (node.maximum // 2)
-            for i in range(0, (node.maximum // 2) + 1):
-                self.clauses += self.clauses
+    def add_limit(self, regulator_state):
+        i = 0
+        while i < len(self.limits):
+            comparison = regulator_state.monotonic_compare(self.limits[i])
 
-            last_index += (node.maximum // 2) + 1
+            if comparison * self.nature < 0:
+                return
+            elif comparison * self.nature > 0:
+                self.limits.remove(self.limits[i])
+                i -= 1
 
-        self.index_length = last_index - 1
+            i += 1
 
-    def empty(self):
-        for clause in self.clauses:
-            if clause is not None and clause.regulator_state is not None:
+        self.limits.append(regulator_state)
+
+
+class PartialRegulatorState:
+    def __init__(self):
+        self.regulators = []
+        self.values = []
+
+    def copy(self):
+        copy = PartialRegulatorState()
+        copy.regulators = list(self.regulators)
+        copy.values = list(self.values)
+
+        return copy
+
+    def extend(self, regulator, value):
+        copy = self.copy()
+        copy.regulators.append(regulator)
+        copy.values.append(value)
+
+        return copy
+
+    def matches(self, regulator_state):
+        for i in range(0, len(self.regulators)):
+            if regulator_state.regulators[self.regulators[i].id] != self.values[i]:
                 return False
 
         return True
 
-    def regulator_state_is_critical(self, regulator_state):
-        return (self.nature > 1 and regulator_state.is_monotonically_minimal()) or \
-               (self.nature < 1 and regulator_state.is_monotonically_maximal())
 
-    def add_regulator_state(self, regulator_state):
-        index = 0
-        for node in self.graph.nodes:
-            if not self.mask & (1 << node.id):
+class RegulationPattern:
+    def __init__(self, graph, nature, activator_mask, inhibitor_mask):
+        self.graph = graph
+        self.nature = nature
+        self.activator_mask = activator_mask
+        self.inhibitor_mask = inhibitor_mask
+        self.mask = activator_mask + inhibitor_mask
+        self.values = [None] * len(self.graph.nodes)
+
+    @staticmethod
+    def from_value(graph, nature, activator_mask, inhibitor_mask, regulator, value):
+        pattern = RegulationPattern(graph, nature, activator_mask, inhibitor_mask)
+        pattern.set_value(regulator, value)
+
+        return pattern
+
+    @staticmethod
+    def from_regulator_state(graph, nature, activator_mask, inhibitor_mask, regulator_state):
+        pattern = RegulationPattern(graph, nature, activator_mask, inhibitor_mask)
+        for regulator in graph.nodes:
+            if pattern.mask & (1 << regulator.id):
+                pattern.set_value(regulator, regulator_state.regulators[regulator.id])
+
+        return pattern
+
+    def _copy(self):
+        copy = RegulationPattern(self.graph, self.nature, self.activator_mask, self.inhibitor_mask)
+        copy.values = list(self.values)
+
+        return copy
+
+    def _invert_values(self, regulator):
+        return (self.activator_mask & (1 << regulator.id) and self.nature > 0) or \
+                    (self.inhibitor_mask & (1 << regulator.id) and self.nature < 0)
+
+    def set_value(self, regulator, value):
+        self.values[regulator.id] = value
+
+        if self._invert_values(regulator):
+            self.values[regulator.id] = regulator.maximum - self.values[regulator.id]
+
+        if self.values[regulator.id] == regulator.maximum:
+            self.values[regulator.id] = None
+
+    def superpattern(self, regulator):
+        pattern = self._copy()
+
+        pattern.values[regulator.id] = pattern.values[regulator.id] + 1
+
+        return pattern
+
+    def concrete_subpattern(self, regulator, value):
+        pattern = self._copy()
+
+        pattern.values[regulator.id] = value
+
+        return pattern
+
+    def __contains__(self, pattern):
+        if self.mask != pattern.mask:
+            return False
+
+        for i in range(0, len(self.values)):
+            if not self.mask & (1 << i):
                 continue
-            index *= (2 ** ((node.maximum // 2) + 1))
-            index += regulator_state.regulators[node.id]
 
-        if self.clauses[index] is None:
-            self.clauses[index] = Clause()
-        if self.clauses[index].regulator_state is not None:
-            return
-
-        self.clauses[index].regulator_state = regulator_state
-
-        if not self.regulator_state_is_critical(regulator_state):
-            for node in self.graph.nodes:
-                if not self.mask & (1 << node.id):
-                    continue
-                clean_index = index - (regulator_state.regulators[node.id] << (self.index_length - self.index_map[node.id]))
-                for i in range(0, node.maximum + 1):
-                    if i == regulator_state.regulators[node.id]:
-                        continue
-
-                    complete_index = clean_index + (i << (self.index_length - self.index_map[node.id]))
-                    if self.clauses[complete_index] is None:
-                        self.clauses[complete_index] = Clause()
-                    else:
-                        self.clauses[complete_index].add_sibling(node, index)
-
-    def collapse(self):
-        new_builders = []
-
-        for node in self.graph.nodes:
-            if not self.mask & (1 << node.id):
-                continue
-            new_mask = self.mask - (1 << node.id)
-            new_layer = FormulaBuilder(self.graph, new_mask, self.nature)
-
-            for clause in self.clauses:
-                if clause is not None and clause.has_all_siblings(node) and \
-                        clause.regulator_state.edges[node.id].monotonous is not None and \
-                        not self.regulator_state_is_critical(clause.regulator_state):
-                    new_layer.add_regulator_state(clause.regulator_state)
-                    clause.is_subsumed = True
-                    for sibling in clause.siblings[node.id]:
-                        self.clauses[sibling].is_subsumed = True
-
-            if not new_layer.empty():
-                new_builders.append(new_layer)
-
-        return new_builders
-
-    def extract_transitions(self):
-        transitions = []
-
-        for clause in self.clauses:
-            if clause is not None and clause.regulator_state is not None and not clause.is_subsumed:
-                transition_string = "\"{0}\" ".format(clause.regulator_state.target.name)
-                transition_string += "{0}"
-
-                critical = self.regulator_state_is_critical(clause.regulator_state)
-
-                regulator_string = ""
-                for node in self.graph.nodes:
-                    if not self.mask & (1 << node.id) or (critical and clause.regulator_state.edges[node.id].monotonous is not None):
-                        continue
-                    regulator_string += " and \"{0}\"={1}".format(node.name, clause.regulator_state.regulators[node.id])
-                regulator_string = regulator_string[5:]
-
-                if regulator_string:
-                    transition_string += " when {0}\n".format(regulator_string)
-                else:
-                    transition_string += "\n"
-
-                transitions.append(transition_string)
-
-        return transitions
-
-    def merge(self, builder):
-        if builder.mask != self.mask or builder.nature != self.nature:
-            return
-
-        for i in range(0, len(self.clauses)):
-            if self.clauses[i] is None:
-                if builder.clauses[i] is not None:
-                    self.clauses[i] = builder.clauses[i]
+            if pattern.values[i] is None:
+                if self.values[i] is not None:
+                    return False
             else:
-                if self.clauses[i].regulator_state is None:
-                    self.clauses[i].regulator_state = builder.clauses[i].regulator_state
-                for sibling in builder.clauses[i].siblings:
-                    if sibling in self.clauses[i].siblings:
-                        self.clauses[i].siblings[sibling] = self.clauses[i].siblings[sibling].union(builder.clauses[i].siblings[sibling])
-                    else:
-                        self.clauses[i].siblings[sibling] = builder.clauses[i].siblings[sibling]
+                if self.values[i] is not None and self.values[i] < pattern.values[i]:
+                    return False
+
+        return True
+
+    def __str__(self):
+        constraints = ""
+
+        for regulator in self.graph.nodes:
+            if (not self.mask & (1 << regulator.id)) or self.values[regulator.id] is None:
+                continue
+
+            value = self.values[regulator.id]
+            if self._invert_values(regulator):
+                value = regulator.maximum - value
+
+            constraints = constraints + " and \"{0}\"={1}".format(regulator.name, value)
+
+        if len(constraints):
+            return constraints[5:]
+
+        return constraints
 
 
-class BuilderCollection():
-    def __init__(self):
-        self.builders = dict()
+class RegulatorLattice:
+    def __init__(self, graph, allowed_values, activator_mask, inhibitor_mask):
+        self.graph = graph
+        self.allowed_values = allowed_values
+        self.activator_mask = activator_mask
+        self.inhibitor_mask = inhibitor_mask
+        self.mask = activator_mask + inhibitor_mask
 
-    def __len__(self):
-        return len(self.builders)
+        self.neutral_regulators = PartialRegulatorState()
 
-    def add(self, builder):
-        if builder.mask in self.builders:
-            self.builders[builder.mask].merge(builder)
-        else:
-            self.builders[builder.mask] = builder
+        self.activation_patterns = []
+        self.inhibition_patterns = []
 
-    def add_many(self, builders):
-        for builder in builders:
-            self.add(builder)
+    def initialise_patterns(self):
+        for regulator in self.graph.nodes:
+            is_activator = self.activator_mask & (1 << regulator.id)
+            is_inhibitor = self.inhibitor_mask & (1 << regulator.id)
+            if not (is_activator or is_inhibitor):
+                continue
+
+            for value in range(0, regulator.maximum + 1):
+                if (is_activator and value > 0) or (is_inhibitor and value < regulator.maximum):
+                    self.activation_patterns.append(RegulationPattern.from_value(self.graph, 1, self.activator_mask, self.inhibitor_mask, regulator, value))
+                if (is_activator and value < regulator.maximum) or (is_inhibitor and value > 0):
+                    self.inhibition_patterns.append(RegulationPattern.from_value(self.graph, -1, self.activator_mask, self.inhibitor_mask, regulator, value))
+
+        if not len(self.activation_patterns):
+            self.activation_patterns.append(RegulationPattern(self.graph, 1, self.activator_mask, self.inhibitor_mask))
+        if not len(self.inhibition_patterns):
+            self.inhibition_patterns.append(RegulationPattern(self.graph, 1, self.activator_mask, self.inhibitor_mask))
+
+    def copy(self):
+        copy = RegulatorLattice(self.graph, self.allowed_values, self.activator_mask, self.inhibitor_mask)
+        copy.activation_patterns = list(self.activation_patterns)
+        copy.inhibition_patterns = list(self.inhibition_patterns)
+        copy.neutral_regulators = self.neutral_regulators.copy()
+
+        return copy
+
+    def add_neutral_regulator(self, regulator, value):
+        extension = self.copy()
+        extension.neutral_regulators = self.neutral_regulators.extend(regulator, value)
+
+        return extension
+
+    @staticmethod
+    def _filter_subsumed_patterns(pattern_list, new_patterns):
+        i = 0
+        while i < len(pattern_list):
+            for pattern in new_patterns:
+                if pattern_list[i] in pattern:
+                    pattern_list.remove(pattern_list[i])
+                    i -= 1
+                    break
+
+            i += 1
+
+    def _compute_superpatterns(self, seed):
+        superpatterns = [seed]
+
+        for regulator in self.graph.nodes:
+            if (not self.mask & (1 << regulator.id)) or seed.values[regulator.id] is None:
+                continue
+
+            new_superpatterns = []
+
+            for value in range(seed.values[regulator.id], regulator.maximum):
+                for pattern in superpatterns:
+                    new_superpatterns.append(pattern.superpattern(regulator))
+
+            superpatterns = new_superpatterns
+
+        return superpatterns
+
+    def limit_inhibition(self, limit):
+        limit_pattern = RegulationPattern.from_regulator_state(self.graph, -1, self.activator_mask, self.inhibitor_mask, limit)
+
+        superpatterns = self._compute_superpatterns(limit_pattern)
+
+        self._filter_subsumed_patterns(self.inhibition_patterns, superpatterns)
+
+        for pattern in superpatterns:
+            for regulator in self.graph.nodes:
+                if (not self.mask & (1 << regulator.id)) or pattern.values[regulator.id] is not None:
+                    continue
+
+                for value in range(0, regulator.maximum):
+                    self.inhibition_patterns.append(pattern.concrete_subpattern(regulator, value))
+
+    def limit_activation(self, limit):
+        limit_pattern = RegulationPattern.from_regulator_state(self.graph, 1, self.activator_mask, self.inhibitor_mask, limit)
+
+        superpatterns = self._compute_superpatterns(limit_pattern)
+
+        self._filter_subsumed_patterns(self.activation_patterns, superpatterns)
+
+        for pattern in superpatterns:
+            for regulator in self.graph.nodes:
+                if (not self.mask & (1 << regulator.id)) or pattern.values[regulator.id] is not None:
+                    continue
+
+                for value in range(0, regulator.maximum):
+                    self.activation_patterns.append(pattern.concrete_subpattern(regulator, value))
+
+    def constraints(self, pattern):
+        constraints = str(pattern)
+
+        for i in range(0, len(self.neutral_regulators.regulators)):
+            constraints = constraints + " and \"{0}\"={1}".format(self.neutral_regulators.regulators[i].name, self.neutral_regulators.values[i])
+
+        if len(constraints):
+            constraints = "when {0}".format(constraints)
+
+        return constraints
 
 
 class ConfigurationWrapperModel(pypint.InMemoryModel):
@@ -177,54 +267,76 @@ class ConfigurationWrapperModel(pypint.InMemoryModel):
             data += "\"{0}\" {1}\n".format(node.name, list(range(0, node.maximum + 1)))
 
         for node in graph.nodes:
-            for i in range(0, node.maximum):
-                mask = node.regulators
-                if node.regulators & (1 << node.id):
-                    mask -= (1 << node.id)
+            for value in range(0, node.maximum):
+                can_activate = context.allowed_values.max[node.id] > value
+                can_inhibit = 0 <= context.allowed_values.min[node.id] <= value
 
-                inhibitions = FormulaBuilder(graph, mask, -1)
-                activations = FormulaBuilder(graph, mask, 1)
+                if not (can_activate or can_inhibit):
+                    continue
+
+                self_regulated = node.regulators & (1 << node.id)
+
+                activation_limits = RegulationLimitCollection(1)
+                inhibition_limits = RegulationLimitCollection(-1)
 
                 for regulator_state in node.regulator_states:
-                    if regulator_state.matches_value(node.id, i + 1) and \
-                            context.lattice.min[regulator_state.id] < i + 1 and \
-                            context.allowed_lattice.min[regulator_state.id] < i + 1:
-                        inhibitions.add_regulator_state(regulator_state)
-                    if regulator_state.matches_value(node.id, i) and \
-                            context.lattice.max[regulator_state.id] > i and \
-                            context.allowed_lattice.max[regulator_state.id] > i:
-                        activations.add_regulator_state(regulator_state)
+                    if can_inhibit and context.lattice.min[regulator_state.id] > value and \
+                            (not self_regulated or regulator_state.regulators[node.id] == value + 1):
+                        activation_limits.add_limit(regulator_state)
 
-                inhibition_string = "{0} -> {1}".format(i + 1, i)
-                activation_string = "{0} -> {1}".format(i, i + 1)
+                    if can_activate and context.lattice.max[regulator_state.id] <= value and \
+                            (not self_regulated or regulator_state.regulators[node.id] == value):
+                        inhibition_limits.add_limit(regulator_state)
 
-                inhibition_refinements = BuilderCollection()
-                inhibition_refinements.add_many(inhibitions.collapse())
-                for transition in inhibitions.extract_transitions():
-                    data += transition.format(inhibition_string)
+                activator_mask = 0
+                inhibitor_mask = 0
 
-                activation_refinements = BuilderCollection()
-                activation_refinements.add_many(activations.collapse())
-                for transition in activations.extract_transitions():
-                    data += transition.format(activation_string)
+                neutral_regulators = []
 
-                while len(inhibition_refinements):
-                    new_refinements = BuilderCollection()
-                    for refinement in inhibition_refinements.builders.values():
-                        new_refinements.add_many(refinement.collapse())
-                        for transition in refinement.extract_transitions():
-                            data += transition.format(inhibition_string)
+                for regulator in graph.nodes:
+                    if not node.regulators & (1 << regulator.id) or regulator.id == node.id:
+                        continue
 
-                    inhibition_refinements = new_refinements
+                    if node.regulator_states[0].edges[regulator.id].monotonous is None:
+                        neutral_regulators.append(regulator)
+                    else:
+                        if node.regulator_states[0].edges[regulator.id].monotonous < 0:
+                            inhibitor_mask += 1 << regulator.id
+                        else:
+                            activator_mask += 1 << regulator.id
 
-                while len(activation_refinements):
-                    new_refinements = BuilderCollection()
-                    for refinement in activation_refinements.builders.values():
-                        new_refinements.add_many(refinement.collapse())
-                        for transition in refinement.extract_transitions():
-                            data += transition.format(activation_string)
+                prototype_lattice = RegulatorLattice(graph, context.allowed_values, activator_mask, inhibitor_mask)
+                prototype_lattice.initialise_patterns()
+                regulator_lattices = [prototype_lattice]
+                for regulator in neutral_regulators:
+                    new_regulator_lattices = []
+                    for j in range(0, regulator.maximum + 1):
+                        for lattice in regulator_lattices:
+                            new_regulator_lattices.append(lattice.add_neutral_regulator(regulator, j))
 
-                    activation_refinements = new_refinements
+                    regulator_lattices = list(new_regulator_lattices)
+
+                for lattice in regulator_lattices:
+                    for limit in activation_limits.limits:
+                        if lattice.neutral_regulators.matches(limit):
+                            lattice.limit_activation(limit)
+
+                    for limit in inhibition_limits.limits:
+                        if lattice.neutral_regulators.matches(limit):
+                            lattice.limit_inhibition(limit)
+
+                node_header = "\"{0}\"".format(node.name)
+
+                inhibition_string = "{0} -> {1}".format(value + 1, value)
+                activation_string = "{0} -> {1}".format(value, value + 1)
+
+                for lattice in regulator_lattices:
+                    if can_activate:
+                        for pattern in lattice.activation_patterns:
+                            data += "{0} {1} {2}\n".format(node_header, activation_string, lattice.constraints(pattern))
+                    if can_inhibit:
+                        for pattern in lattice.inhibition_patterns:
+                            data += "{0} {1} {2}\n".format(node_header, inhibition_string, lattice.constraints(pattern))
 
         marking_string = ""
         for node in graph.nodes:
@@ -286,47 +398,28 @@ def restrict_context_to_model(graph, context, model):
     activations = [None] * len(graph.nodes)
     inhibitions = [None] * len(graph.nodes)
 
-    for node in graph.nodes:
-        activations[node.id] = [None] * node.maximum
-        inhibitions[node.id] = [None] * node.maximum
-
-        for i in range(0, node.maximum):
-            activations[node.id][i] = TransitionCollection(graph)
-            inhibitions[node.id][i] = TransitionCollection(graph)
-
     for transition in model.local_transitions:
         target = graph.get_node(transition.a)
 
         if transition.i < transition.j:
-            activations[target.id][transition.i].add_transition(transition)
+            if activations[target.id] is None:
+                activations[target.id] = 0
+
+            activations[target.id] = max(activations[target.id], transition.j)
         else:
-            inhibitions[target.id][transition.j].add_transition(transition)
+            if inhibitions[target.id] is None:
+                inhibitions[target.id] = target.maximum
+
+            inhibitions[target.id] = min(inhibitions[target.id], transition.j)
 
     for node in graph.nodes:
-        for regulator_state in node.regulator_states:
-            induced_maximum = None
-            induced_minimum = None
+        if activations[node.id] is None:
+            context.forbid_activation(node)
+        else:
+            context.soft_limit_max(node, activations[node.id])
 
-            for i in range(0, node.maximum):
-                if regulator_state in activations[node.id][i]:
-                    if induced_maximum is None:
-                        induced_maximum = i + 1
-                    else:
-                        induced_maximum = max(induced_maximum, i + 1)
-
-                if regulator_state in inhibitions[node.id][i]:
-                    if induced_minimum is None:
-                        induced_minimum = i
-                    else:
-                        induced_minimum = min(induced_minimum, i)
-
-            if induced_maximum is None:
-                context.forbid_activation(regulator_state)
-            else:
-                context.soft_limit_max(regulator_state, induced_maximum)
-
-            if induced_minimum is None:
-                context.forbid_inhibition(regulator_state)
-            else:
-                context.soft_limit_min(regulator_state, induced_minimum)
+        if inhibitions[node.id] is None:
+            context.forbid_inhibition(node)
+        else:
+            context.soft_limit_min(node, inhibitions[node.id])
 

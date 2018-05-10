@@ -71,6 +71,25 @@ class RegulatorState:
 
         return True
 
+    def monotonic_compare(self, regulatoryState):
+        tendency = 0
+
+        for i in range(0, len(self.regulators)):
+            if self.regulators[i] == regulatoryState.regulators[i]:
+                continue
+            else:
+                if self.edges[i].monotonous is not None:
+                    local_tendency = (self.regulators[i] - regulatoryState.regulators[i]) * self.edges[i].monotonous
+                    if tendency == 0:
+                        tendency = local_tendency
+                    else:
+                        if tendency != local_tendency:
+                            return 0
+                else:
+                    return 0
+
+        return tendency
+
     def extend(self, graph, edge):
         self.edges[edge.source.id] = edge
         extended_states = []
