@@ -53,6 +53,7 @@ class Unfolding:
         self.conditions = []
         self.events = []
         self.discarded_events = []
+        self.discarded_conditions = []
         self.initial_marking = list(initial_marking)
         self.initial_context = initial_context.copy()
         self.marking_table = [None]
@@ -92,7 +93,7 @@ class Unfolding:
 
         for condition in event.preset:
             new_condition = condition.copy()
-            new_condition.id = len(self.conditions)
+            new_condition.id = len(self.conditions) + len(self.discarded_conditions)
             if condition.node == event.target:
                 new_condition.value = event.target_value
             new_condition.parent = event
@@ -129,6 +130,8 @@ class Unfolding:
             condition.poset = set()
 
     def remove_condition(self, condition, queue):
+        self.discarded_conditions.append(condition)
+
         for event in condition.poset:
             self.remove_event(event, queue)
 
