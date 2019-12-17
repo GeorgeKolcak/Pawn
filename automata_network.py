@@ -22,28 +22,74 @@ class RegulationLimitCollection:
         self.limits.append(regulator_state)
 
 
-class PartialRegulatorState:
-    def __init__(self):
-        self.regulators = []
-        self.values = []
+class PartialRegulatorStateHierarchy:
+    def __init__(self, graph, condition, nature):
+        self.graph = graph
+        self.condition = condition
+        self.nature = nature
+
+        self.layers = {}
+
+    def compute_layers(self):
+        mask_layers = self._generate_masks()
+
+        for i in range(0, self.condition.node.regulator_count):
+            self.layers[i] = self._generate_layer(mask_layers[i])
 
     def copy(self):
-        copy = PartialRegulatorState()
-        copy.regulators = list(self.regulators)
-        copy.values = list(self.values)
+        copy = PartialRegulatorStateHierarchy(self.graph, self.condition, self.nature)
 
-        return copy
+        for i in range(0, self.condition.node.regulator_count):
+            copy.layers[i] = list(self.layers[i])
 
-    def extend(self, regulator, value):
-        copy = self.copy()
-        copy.regulators.append(regulator)
-        copy.values.append(value)
+    def _generate_layer(self, masks):
+        layer = []
+
+        for mask in masks:
+            for regulator_state in self.condition.node.regulator_states:
+                for i in range(0, len(self.graph.nodes)):
+                    if (mask & 1 << i) and regulator_state.regulators[i] != 0:
+                        continue
+
+                    layer.append(PartialRegulatorState(regulator_state, mask))
+
+        return layer
+
+    def _generate_masks(self):
+        regulators = []
+
+        for i in range(0, len(self.graph.nodes)):
+            if self.condition.node.regulators & 1 << i:
+                regulators.append(self.graph.nodes[i])
+
+        mask_layers = {0: [0]}
+        for i in range(1, len(regulators)):
+            mask_layers[i] = []
+
+            for mask in mask_layers[i - 1]:
+                for regulator in regulators:
+                    if not (mask & 1 << regulator.id) and (mask > regulator.id):
+                        mask_layers[i].append(mask + 1 << regulator.id)
+
+        return mask_layers
+
+    def partial_regulator_states(self, layer):
+        return self.layers[layer]
+
+
+class PartialRegulatorState:
+    def __init__(self, regulator_state, mask):
+        self.regulator_state = regulator_state
+        self.mask = mask
+
+    def copy(self):
+        copy = PartialRegulatorState(self.regulator_state, self.mask)
 
         return copy
 
     def matches(self, regulator_state):
-        for i in range(0, len(self.regulators)):
-            if regulator_state.regulators[self.regulators[i].id] != self.values[i]:
+        for i in range(0, len(regulator_state.regulators)):
+            if (not (self.mask & 1 << i)) and regulator_state.regulators[i] != self.regulator_state.regulators[i]:
                 return False
 
         return True
